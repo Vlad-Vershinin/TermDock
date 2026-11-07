@@ -2,6 +2,7 @@ import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, AuthMethod, errorText, Jump, Server } from "../lib/api";
 import { useUi } from "../lib/ui";
+import { useScripts } from "./Scripts";
 
 export const COLORS = ["#58a6ff", "#3fb950", "#d29922", "#ff7b72", "#bc8cff", "#39c5cf", "#f778ba", "#8b949e"];
 
@@ -37,6 +38,7 @@ function goesThrough(s: Server, id: string, all: Server[], depth = 0): boolean {
 
 export function ServerDialog({ server, servers, folders, folder, onClose, onSaved }: Props) {
   const ui = useUi();
+  const { scripts, edit: editScript } = useScripts();
   const [s, setS] = useState<Server>(() => ({ ...empty, group: folder ?? "", ...server }));
   const [secret, setSecret] = useState("");
   const [forget, setForget] = useState(false);
@@ -226,6 +228,31 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
               setForget={setJumpForget}
             />
           )}
+        </details>
+
+        <details open={!!server?.connectScript}>
+          <summary>Скрипт при подключении{s.connectScript ? " — включён" : ""}</summary>
+          <label className="field">
+            <span>Выполнять после каждого подключения</span>
+            <select value={s.connectScript ?? ""} onChange={(e) => set("connectScript", e.target.value || null)}>
+              <option value="">— не выполнять —</option>
+              {scripts.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                  {x.mode === "bash" ? " (bash)" : x.steps ? " (по шагам)" : ""}
+                </option>
+              ))}
+              {s.connectScript && !scripts.some((x) => x.id === s.connectScript) && <option value={s.connectScript}>(скрипт удалён)</option>}
+            </select>
+          </label>
+          <p className="hint">
+            Скрипт запускается в терминале, когда сервер закончит выводить приветствие, — например <code>sudo apt update</code>. Скрипты
+            создаются в панели «Скрипты» (Alt+2){" "}
+            <button type="button" className="link-btn" onClick={() => editScript(null)}>
+              или прямо сейчас
+            </button>
+            .
+          </p>
         </details>
 
         <details>

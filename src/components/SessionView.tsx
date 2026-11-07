@@ -11,8 +11,9 @@ import { paneRegistry } from "../lib/sessions";
 import { useTransfers } from "../lib/transfers";
 import { useUi } from "../lib/ui";
 import { FilePanel } from "./FilePanel";
-import { IClose, IFolder, IRefresh, IScript, ISplitDown, ISplitRight } from "./Icons";
-import { useScriptMenu } from "./Scripts";
+import { IClose, IFolder, IPlay, IRefresh, IScript, ISplitDown, ISplitRight, IStep } from "./Icons";
+import { useScriptMenu, useScripts } from "./Scripts";
+import { commandBlock } from "../lib/scripts";
 import { Telemetry } from "./Telemetry";
 
 export type SessionStatus = "connecting" | "connected" | "closed" | "error";
@@ -37,6 +38,13 @@ const FONT = '"JetBrains Mono", "Cascadia Mono", "Fira Code", Consolas, "DejaVu 
 export function SessionView({ paneId, server, visible, focused, split: inSplit, onFocus, onStatus, onSplit, onClose }: Props) {
   const ui = useUi();
   const scriptMenu = useScriptMenu();
+  const { scripts, run: runScript } = useScripts();
+  /** Step-by-step script run in progress: next = index of the command to send next. */
+  const [steps, setSteps] = useState<{ name: string; list: string[]; next: number } | null>(null);
+  const stepsRef = useRef(steps);
+  stepsRef.current = steps;
+  /** Time of the last output from the server (to wait for the login banner before the connect script). */
+  const lastOutput = useRef(0);
   const transfers = useTransfers();
   const termEl = useRef<HTMLDivElement>(null);
   const termZone = useRef<HTMLDivElement>(null);
@@ -86,7 +94,10 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
           rows: t.rows,
           onEvent: (e) => {
             if (disposed.current) return;
-            if (e.type === "data") t.write(new Uint8Array(e.data));
+            if (e.type === "data") {
+              lastOutput.current = Date.now();
+              t.write(new Uint8Array(e.data));
+            }
             else {
               if (id) api.disconnect(id).catch(() => {});
               else closedEarly = true;
@@ -109,6 +120,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         setSessionId(id);
         updateStatus("connected");
         t.focus();
+        onConnectedRef.current();
       } catch (e) {
         if (disposed.current) return;
         const raw = errorText(e);
@@ -263,6 +275,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     t.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
       const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.shiftKey && e.key === "Enter" && stepsRef.current) return stepActions.current.next(), false;
       if (mod && e.shiftKey && e.code === "KeyC") {
         const sel = t.getSelection();
         if (sel) writeText(sel);
@@ -320,20 +333,71 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     });
   }, [visible, focused, showFiles, split]);
 
+  // ---- scripts ----
+  const sendText = useCallback((text: string) => {
+    if (!sessionRef.current) return false;
+    api.write(sessionRef.current, new TextEncoder().encode(text)).catch(() => {});
+    return true;
+  }, []);
+
+  const stepActions = useRef({ next: () => {}, rest: () => {}, stop: () => {} });
+  stepActions.current = {
+    next: () => {
+      const st = stepsRef.current;
+      if (!st || !sendText(st.list[st.next].replace(/\n/g, "\r") + "\r")) return setSteps(null);
+      setSteps(st.next + 1 < st.list.length ? { ...st, next: st.next + 1 } : null);
+      term.current?.focus();
+    },
+    rest: () => {
+      const st = stepsRef.current;
+      if (st) sendText(commandBlock(st.list.slice(st.next)));
+      setSteps(null);
+      term.current?.focus();
+    },
+    stop: () => {
+      setSteps(null);
+      term.current?.focus();
+    },
+  };
+  // A finished or lost session ends the step-by-step run.
+  useEffect(() => {
+    if (status !== "connected") setSteps(null);
+  }, [status]);
+
   // Let app-level features (scripts) type into this terminal.
   useEffect(() => {
-    const enc = new TextEncoder();
     paneRegistry.set(paneId, {
       serverId: server.id,
-      send: (text) => {
-        if (!sessionRef.current) return false;
-        api.write(sessionRef.current, enc.encode(text)).catch(() => {});
+      send: sendText,
+      runSteps: (name, list) => {
+        if (!sessionRef.current || list.length === 0) return false;
+        stepsRef.current = { name, list, next: 0 };
+        stepActions.current.next();
         return true;
       },
       focus: () => term.current?.focus(),
     });
     return () => paneRegistry.delete(paneId);
-  }, [paneId, server.id]);
+  }, [paneId, server.id, sendText]);
+
+  // The server's connect script: runs once the login banner / prompt has settled.
+  const onConnectedRef = useRef(() => {});
+  onConnectedRef.current = () => {
+    const id = server.connectScript;
+    if (!id) return;
+    const script = scripts.find((x) => x.id === id);
+    if (!script) return ui.toast(`Скрипт при подключении к «${server.name}» не найден — выберите другой в настройках сервера`, "error");
+    const session = sessionRef.current;
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (sessionRef.current !== session || disposed.current) return clearInterval(timer);
+      const quiet = Date.now() - Math.max(lastOutput.current, started) > 400;
+      if (quiet || Date.now() - started > 5000) {
+        clearInterval(timer);
+        runScript(script, paneId);
+      }
+    }, 100);
+  };
 
   // ---- drop onto terminal = upload to the current remote folder ----
   const dropRef = useRef<(d: DropDetail) => void>(() => {});
@@ -428,6 +492,26 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
           </button>
         )}
       </div>
+      {steps && (
+        <div className="step-bar">
+          <IStep size={13} />
+          <span className="step-name">
+            {steps.name}: шаг {steps.next + 1} из {steps.list.length}
+          </span>
+          <code className="step-next" title={steps.list[steps.next]}>
+            {steps.list[steps.next]}
+          </code>
+          <button className="btn btn-sm btn-primary" onClick={() => stepActions.current.next()} title="Отправить эту команду (Ctrl+Shift+Enter)">
+            <IStep size={12} /> Следующая
+          </button>
+          <button className="btn btn-sm" onClick={() => stepActions.current.rest()} title="Отправить все оставшиеся команды одним блоком">
+            <IPlay size={12} /> Все остальные
+          </button>
+          <button className="icon-btn" onClick={() => stepActions.current.stop()} title="Прервать пошаговый запуск">
+            <IClose size={13} />
+          </button>
+        </div>
+      )}
       <div className="session-body" ref={body}>
         <div className="term-zone" ref={termZone} data-dropzone={`${paneId}:term`} data-accept="os,local" style={{ flex: showFiles ? `0 0 ${split * 100}%` : "1 1 auto" }}>
           <div className="term" ref={termEl} />

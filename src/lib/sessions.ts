@@ -4,6 +4,8 @@ export interface PaneHandle {
   serverId: string;
   /** Sends raw input to the shell. Returns false when the pane is not connected. */
   send: (text: string) => boolean;
+  /** Starts a step-by-step run: sends the first command, the rest one per click. False when not connected. */
+  runSteps: (name: string, steps: string[]) => boolean;
   focus: () => void;
 }
 

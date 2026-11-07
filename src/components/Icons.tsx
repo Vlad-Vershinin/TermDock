@@ -135,3 +135,9 @@ export const ICapMin = cap("M0 5.5h10");
 export const ICapMax = cap("M.5.5h9v9h-9z");
 export const ICapRestore = cap("M.5 2.5h7v7h-7zM2.5 2.5V.5h7v7h-2");
 export const ICapClose = cap("M0 0l10 10M10 0L0 10");
+export const IStep = svg(
+  <>
+    <path d="M5 5l7 7-7 7" />
+    <path d="M14 5v14" />
+  </>,
+);

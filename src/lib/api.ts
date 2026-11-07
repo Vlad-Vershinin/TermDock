@@ -17,6 +17,8 @@ export interface Server {
   hasSecret: boolean;
   /** Connect through this jump host. */
   jump?: Jump | null;
+  /** Saved script (id) to run right after connecting. */
+  connectScript?: string | null;
 }
 
 /** Jump host: a saved server (`serverId`) or one described by the fields below. */
@@ -63,6 +65,8 @@ export interface Script {
   body: string;
   /** terminal: typed into the shell; bash: run as one bash script */
   mode: "terminal" | "bash";
+  /** Terminal mode only: send one line per click instead of the whole script. */
+  steps?: boolean;
 }
 
 export interface Disk {

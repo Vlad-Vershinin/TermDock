@@ -15,6 +15,9 @@ pub struct Script {
     /// "terminal" — typed into the shell line by line; "bash" — run as one bash script (heredoc).
     #[serde(default = "default_mode")]
     pub mode: String,
+    /// Terminal mode only: send one line per click instead of the whole script.
+    #[serde(default)]
+    pub steps: bool,
 }
 
 fn default_mode() -> String {

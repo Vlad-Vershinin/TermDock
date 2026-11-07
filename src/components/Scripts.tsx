@@ -1,16 +1,19 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, Script } from "../lib/api";
-import { fillVariables, scriptInput, scriptVariables } from "../lib/scripts";
+import { fillVariables, scriptInput, scriptSteps, scriptVariables } from "../lib/scripts";
 import { paneRegistry } from "../lib/sessions";
 import { useUi } from "../lib/ui";
-import { IClose, IEdit, IPlay, IPlus, IScript, ITrash } from "./Icons";
+import { IClose, IEdit, IPlay, IPlus, IScript, IStep, ITrash } from "./Icons";
 
 interface ScriptsCtx {
   scripts: Script[];
   edit: (s: Script | null) => void;
   remove: (s: Script) => Promise<void>;
-  /** Runs a script in the given terminal pane (asks for {{variables}} first). */
-  run: (s: Script, paneId: string | null | undefined) => Promise<void>;
+  /**
+   * Runs a script in the given terminal pane (asks for {{variables}} first).
+   * steps: one command per click; defaults to the script's own setting. Bash scripts always run whole.
+   */
+  run: (s: Script, paneId: string | null | undefined, steps?: boolean) => Promise<void>;
 }
 
 const Ctx = createContext<ScriptsCtx>(null!);
@@ -39,7 +42,7 @@ export function ScriptsProvider({ children }: { children: ReactNode }) {
   );
 
   const run = useCallback(
-    async (s: Script, paneId: string | null | undefined) => {
+    async (s: Script, paneId: string | null | undefined, steps = !!s.steps) => {
       const pane = paneRegistry.get(paneId);
       if (!pane) return ui.toast("Откройте терминал сервера, чтобы выполнить скрипт", "error");
       let body = s.body;
@@ -53,7 +56,8 @@ export function ScriptsProvider({ children }: { children: ReactNode }) {
         if (!r) return;
         body = fillVariables(body, Object.fromEntries(vars.map((v) => [v.name, String(r[v.name] ?? "")])));
       }
-      if (!pane.send(scriptInput(s, body))) return ui.toast("Терминал не подключён", "error");
+      const sent = steps && s.mode !== "bash" ? pane.runSteps(s.name, scriptSteps(body)) : pane.send(scriptInput(s, body));
+      if (!sent) return ui.toast("Терминал не подключён", "error");
       pane.focus();
     },
     [ui],
@@ -78,12 +82,14 @@ export function ScriptsProvider({ children }: { children: ReactNode }) {
   );
 }
 
+const scriptHint = (s: Script) => (s.mode === "bash" ? "bash" : s.steps ? "по шагам" : undefined);
+
 /** Menu items for running scripts (title bar / session bar dropdowns). */
 export function useScriptMenu() {
   const { scripts, run, edit } = useScripts();
   return (paneId: string | null | undefined) => [
     ...(scripts.length ? [{ header: "Выполнить скрипт" }] : []),
-    ...scripts.map((s) => ({ label: s.name, icon: <IPlay size={13} />, hint: s.mode === "bash" ? "bash" : undefined, onClick: () => run(s, paneId) })),
+    ...scripts.map((s) => ({ label: s.name, icon: <IPlay size={13} />, hint: scriptHint(s), onClick: () => run(s, paneId) })),
     ...(scripts.length ? (["-"] as const) : []),
     { label: "Новый скрипт…", icon: <IPlus size={13} />, onClick: () => edit(null) },
   ];
@@ -132,7 +138,8 @@ export function ScriptsPanel({ paneId, target, onClose }: { paneId: string | nul
               onDoubleClick={() => run(s, paneId)}
               onContextMenu={(e) =>
                 ui.menu(e, [
-                  { label: "Выполнить", icon: <IPlay size={13} />, disabled: !paneId, onClick: () => run(s, paneId) },
+                  { label: "Выполнить целиком", icon: <IPlay size={13} />, disabled: !paneId, onClick: () => run(s, paneId, false) },
+                  ...(s.mode === "bash" ? [] : [{ label: "Выполнить по шагам", icon: <IStep size={13} />, disabled: !paneId, onClick: () => run(s, paneId, true) }]),
                   { label: "Изменить", icon: <IEdit size={13} />, onClick: () => edit(s) },
                   { label: "Дублировать", icon: <IPlus size={13} />, onClick: () => edit({ ...s, id: "", name: `${s.name} (копия)` }) },
                   "-",
@@ -147,7 +154,7 @@ export function ScriptsPanel({ paneId, target, onClose }: { paneId: string | nul
               <div className="script-text">
                 <div className="script-name">
                   {s.name}
-                  {s.mode === "bash" && <span className="tag">bash</span>}
+                  {scriptHint(s) && <span className="tag">{scriptHint(s)}</span>}
                 </div>
                 <div className="script-desc">{s.description || s.body.split("\n")[0]}</div>
               </div>
@@ -229,10 +236,28 @@ function ScriptDialog({ script, onClose, onSaved }: { script: Script | null; onC
           </div>
           <p className="hint" style={{ marginTop: 2 }}>
             {s.mode === "terminal"
-              ? "Команды вводятся в текущий shell построчно, как будто вы их набрали: cd, export и т.п. сохраняются в сессии."
+              ? "Команды вводятся в текущий shell, как будто вы их набрали: cd, export и т.п. сохраняются в сессии."
               : "Скрипт целиком выполняется отдельным процессом bash: работают set -e, функции, циклы; состояние shell не меняется."}
           </p>
         </div>
+        {s.mode === "terminal" && (
+          <div className="field">
+            <span>Запуск</span>
+            <div className="segmented">
+              <button type="button" className={!s.steps ? "on" : ""} onClick={() => setS({ ...s, steps: false })}>
+                Целиком
+              </button>
+              <button type="button" className={s.steps ? "on" : ""} onClick={() => setS({ ...s, steps: true })}>
+                По шагам
+              </button>
+            </div>
+            <p className="hint" style={{ marginTop: 2 }}>
+              {s.steps
+                ? "Отправляется первая команда, следующие — по кнопке «Следующая» в панели сессии (или Ctrl+Shift+Enter). Удобно, чтобы проверять результат каждой команды."
+                : "Все строки отправляются сами, одним блоком: запросы sudo и вопросы вроде [Y/n] не съедают следующие команды."}
+            </p>
+          </div>
+        )}
         <label className="field">
           <span>Команды</span>
           <textarea

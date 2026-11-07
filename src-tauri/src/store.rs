@@ -66,6 +66,9 @@ pub struct Server {
     /// Connect through this jump host.
     #[serde(default)]
     pub jump: Option<Jump>,
+    /// Saved script (id) to run right after connecting.
+    #[serde(default)]
+    pub connect_script: Option<String>,
 }
 
 impl Server {
