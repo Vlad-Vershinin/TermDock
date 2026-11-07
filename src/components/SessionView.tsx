@@ -5,7 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "../lib/open";
 import "@xterm/xterm/css/xterm.css";
-import { api, errorText, Server } from "../lib/api";
+import { api, configJumpText, errorText, Server } from "../lib/api";
 import { DropDetail } from "../lib/dnd";
 import { paneRegistry } from "../lib/sessions";
 import { useTransfers } from "../lib/transfers";
@@ -15,6 +15,7 @@ import { IClose, IFolder, IPlay, IRefresh, IScript, ISplitDown, ISplitRight, ISt
 import { useScriptMenu, useScripts } from "./Scripts";
 import { commandBlock } from "../lib/scripts";
 import { Telemetry } from "./Telemetry";
+import { Ports } from "./Ports";
 
 export type SessionStatus = "connecting" | "connected" | "closed" | "error";
 
@@ -79,7 +80,13 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       const t = term.current!;
       updateStatus("connecting");
       const j = server.jump;
-      const via = j?.serverId ? " через сервер-посредник" : j?.host ? ` через ${j.username}@${j.host}${j.port && j.port !== 22 ? `:${j.port}` : ""}` : "";
+      let via = j?.serverId ? " через сервер-посредник" : j?.host ? ` через ${j.username}@${j.host}${j.port && j.port !== 22 ? `:${j.port}` : ""}` : "";
+      if (!via) {
+        // No jump host in the app: ProxyJump from ~/.ssh/config may apply.
+        const cfg = await api.sshConfigLookup(server.host, server.port).catch(() => null);
+        if (disposed.current) return;
+        if (cfg?.jumps.length) via = ` через ${configJumpText(cfg)} (из ~/.ssh/config)`;
+      }
       t.write(`\r\n\x1b[90mПодключение к ${server.username}@${server.host}:${server.port}${via}…\x1b[0m\r\n`);
       try {
         fit.current?.fit();
@@ -127,12 +134,12 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         // Errors from a jump host: JUMP|<hop id>|<user@host>|<auth>|<code>
         const jm = raw.match(/^JUMP\|([^|]*)\|([^|]*)\|([^|]*)\|([\s\S]*)$/);
         const hop = jm
-          ? { id: jm[1], label: jm[2], isKey: jm[3] === "key", jump: true, msg: jm[4] }
-          : { id: server.id, label: `${server.username}@${server.host}`, isKey: server.auth === "key", jump: false, msg: raw };
+          ? { id: jm[1], label: jm[2], isKey: jm[3] === "key", isAgent: jm[3] === "agent", jump: true, msg: jm[4] }
+          : { id: server.id, label: `${server.username}@${server.host}`, isKey: server.auth === "key", isAgent: server.auth === "agent", jump: false, msg: raw };
         const host = hop.label.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
         const what = hop.jump ? "сервера-посредника " : "";
         const msg = hop.msg;
-        if (msg === "NEED_SECRET" || (msg === "AUTH_FAILED" && !hop.isKey)) {
+        if (msg === "NEED_SECRET" || (msg === "AUTH_FAILED" && !hop.isKey && !hop.isAgent)) {
           const r = await ui.dialog({
             title: hop.isKey ? `Пароль от ключа ${what}${hop.label}` : `Пароль ${what}${hop.label}`,
             message: msg === "AUTH_FAILED" ? <span className="err">Неверный пароль, попробуйте ещё раз.</span> : undefined,
@@ -463,6 +470,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         </span>
         <div className="spacer" />
         {status === "connected" && <Telemetry sessionId={sessionId} visible={visible} />}
+        {status === "connected" && <Ports sessionId={sessionId} visible={visible} />}
         {status === "connected" && showFiles && remoteDirState && (
           <button className="btn btn-sm" title="Перейти в терминале в папку, открытую в файловой панели" onClick={() => cdTo(remoteDir.current!)}>
             cd сюда

@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, AuthMethod, errorText, Jump, Server } from "../lib/api";
+import { api, AuthMethod, configJumpText, errorText, Forward, Jump, Server, SshConfigInfo } from "../lib/api";
 import { useUi } from "../lib/ui";
 import { useScripts } from "./Scripts";
+import { ForwardFields, forwardText, KIND_HINTS, newForward } from "./Ports";
+import { IClose, IPlus } from "./Icons";
 
 export const COLORS = ["#58a6ff", "#3fb950", "#d29922", "#ff7b72", "#bc8cff", "#39c5cf", "#f778ba", "#8b949e"];
 
@@ -50,7 +52,22 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
   const [extraFolders, setExtraFolders] = useState<string[]>([]);
   const [jumpOpen] = useState(jumpMode !== "none");
   const set = <K extends keyof Server>(k: K, v: Server[K]) => setS((x) => ({ ...x, [k]: v }));
+  // What ~/.ssh/config says about the typed host (HostName / ProxyJump hints).
+  const [sshCfg, setSshCfg] = useState<SshConfigInfo | null>(null);
+  useEffect(() => {
+    const host = parseHost(s).host.trim();
+    if (!host) return setSshCfg(null);
+    let stop = false;
+    const t = setTimeout(() => {
+      api.sshConfigLookup(host, Number(s.port) || 22).then((c) => !stop && setSshCfg(c), () => !stop && setSshCfg(null));
+    }, 300);
+    return () => {
+      stop = true;
+      clearTimeout(t);
+    };
+  }, [s.host, s.port]);
   const setJ = <K extends keyof Jump>(k: K, v: Jump[K]) => setJump((x) => ({ ...x, [k]: v }));
+  const setForward = (i: number, f: Forward) => setS((x) => ({ ...x, forwards: (x.forwards ?? []).map((y, j) => (j === i ? f : y)) }));
 
   // A server can't go through itself, or through a server that already goes through it.
   const jumpCandidates = servers.filter((x) => !s.id || !goesThrough(x, s.id, servers));
@@ -81,6 +98,8 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
   const save = async (connect: boolean) => {
     if (jumpMode === "saved" && !jump.serverId) return ui.toast("Выберите сервер-посредник", "error");
     if (jumpMode === "custom" && !jump.host.trim()) return ui.toast("Укажите хост сервера-посредника", "error");
+    const badFw = (s.forwards ?? []).find((f) => (f.kind !== "remote" && !f.bindPort) || (f.kind !== "dynamic" && (!f.destHost.trim() || !f.destPort)));
+    if (badFw) return ui.toast(`Проброс портов: укажите порт и адрес назначения (${forwardText(badFw)})`, "error");
     setBusy(true);
     try {
       const p = parseHost(s);
@@ -120,6 +139,12 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
           <label className="field span2">
             <span>Хост</span>
             <input autoFocus value={s.host} onChange={(e) => set("host", e.target.value)} onBlur={() => setS(parseHost)} placeholder="192.168.1.10 или user@example.com:2222" spellCheck={false} />
+            {sshCfg && (sshCfg.hostname || sshCfg.port !== (Number(s.port) || 22)) && (
+              <span className="hint">
+                Из ~/.ssh/config: адрес {sshCfg.hostname ?? parseHost(s).host.trim()}
+                {sshCfg.port !== 22 ? `:${sshCfg.port}` : ""}
+              </span>
+            )}
           </label>
           <label className="field">
             <span>Пользователь</span>
@@ -147,14 +172,7 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
           </label>
         </div>
 
-        <div className="segmented">
-          <button type="button" className={!isKey ? "on" : ""} onClick={() => set("auth", "password")}>
-            Пароль
-          </button>
-          <button type="button" className={isKey ? "on" : ""} onClick={() => set("auth", "key")}>
-            SSH-ключ
-          </button>
-        </div>
+        <AuthSwitch value={s.auth} onChange={(m) => set("auth", m)} />
 
         {isKey && (
           <label className="field">
@@ -167,27 +185,40 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
             </div>
           </label>
         )}
-        <label className="field">
-          <span>{isKey ? "Passphrase ключа (если есть)" : "Пароль"}</span>
-          <input
-            type="password"
-            value={secret}
-            disabled={forget}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder={s.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
-          />
-        </label>
-        {s.hasSecret && (
-          <label className="check">
-            <input type="checkbox" checked={forget} onChange={(e) => setForget(e.target.checked)} />
-            Забыть сохранённый {isKey ? "passphrase" : "пароль"}
-          </label>
+        {s.auth === "agent" ? (
+          <p className="hint">{AGENT_HINT}</p>
+        ) : (
+          <>
+            <label className="field">
+              <span>{isKey ? "Passphrase ключа (если есть)" : "Пароль"}</span>
+              <input
+                type="password"
+                value={secret}
+                disabled={forget}
+                onChange={(e) => setSecret(e.target.value)}
+                placeholder={s.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
+              />
+            </label>
+            {s.hasSecret && (
+              <label className="check">
+                <input type="checkbox" checked={forget} onChange={(e) => setForget(e.target.checked)} />
+                Забыть сохранённый {isKey ? "passphrase" : "пароль"}
+              </label>
+            )}
+            <p className="hint">Пароли хранятся в системном хранилище (Windows Credential Manager / GNOME Keyring / KWallet), не в файле настроек.</p>
+          </>
         )}
-        <p className="hint">Пароли хранятся в системном хранилище (Windows Credential Manager / GNOME Keyring / KWallet), не в файле настроек.</p>
 
         <details open={jumpOpen}>
           <summary>Подключение через сервер-посредник{jumpMode !== "none" ? " — включено" : ""}</summary>
           <p className="hint">Как ssh -J: сначала подключение к серверу-посреднику (bastion), через него — к этому серверу.</p>
+          {sshCfg?.error && <p className="hint err">~/.ssh/config: {sshCfg.error}</p>}
+          {sshCfg && sshCfg.jumps.length > 0 && (
+            <p className="hint" title={sshCfg.jumps.map((j) => `${j.alias}: ${j.label}`).join("\n")}>
+              Из ~/.ssh/config: через {configJumpText(sshCfg)}
+              {jumpMode === "none" ? " — будет использовано при подключении «Напрямую»." : " — не используется: настройка посредника здесь важнее."}
+            </p>
+          )}
           <div className="segmented">
             {(
               [
@@ -255,6 +286,32 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
           </p>
         </details>
 
+        <details open={!!server?.forwards?.length}>
+          <summary>
+            Проброс портов{s.forwards?.length ? ` — ${s.forwards.filter((f) => f.enabled).length} из ${s.forwards.length}` : ""}
+          </summary>
+          <p className="hint">
+            Запускается при каждом подключении и работает, пока сессия открыта. {KIND_HINTS.local} {KIND_HINTS.remote} {KIND_HINTS.dynamic}
+          </p>
+          {(s.forwards ?? []).map((f, i) => (
+            <div key={f.id} className="fw-edit">
+              <div className="fw-edit-head">
+                <label className="check small" title="Запускать при подключении">
+                  <input type="checkbox" checked={f.enabled} onChange={(e) => setForward(i, { ...f, enabled: e.target.checked })} />
+                  {forwardText(f)}
+                </label>
+                <button type="button" className="icon-btn" title="Удалить проброс" onClick={() => set("forwards", s.forwards!.filter((_, j) => j !== i))}>
+                  <IClose size={13} />
+                </button>
+              </div>
+              <ForwardFields f={f} onChange={(nf) => setForward(i, nf)} />
+            </div>
+          ))}
+          <button type="button" className="link-btn fw-add-btn" onClick={() => set("forwards", [...(s.forwards ?? []), newForward()])}>
+            <IPlus size={12} /> Добавить проброс
+          </button>
+        </details>
+
         <details>
           <summary>Дополнительно</summary>
           <label className="field">
@@ -315,13 +372,7 @@ function JumpFields(p: {
           <input type="number" min={1} max={65535} value={jump.port} onChange={(e) => set("port", Number(e.target.value))} />
         </label>
       </div>
-      <div className="segmented">
-        {(["password", "key"] as AuthMethod[]).map((m) => (
-          <button type="button" key={m} className={jump.auth === m ? "on" : ""} onClick={() => set("auth", m)}>
-            {m === "password" ? "Пароль" : "SSH-ключ"}
-          </button>
-        ))}
-      </div>
+      <AuthSwitch value={jump.auth} onChange={(m) => set("auth", m)} />
       {isKey && (
         <label className="field">
           <span>Приватный ключ посредника</span>
@@ -333,22 +384,49 @@ function JumpFields(p: {
           </div>
         </label>
       )}
-      <label className="field">
-        <span>{isKey ? "Passphrase ключа посредника (если есть)" : "Пароль посредника"}</span>
-        <input
-          type="password"
-          value={p.secret}
-          disabled={p.forget}
-          onChange={(e) => p.setSecret(e.target.value)}
-          placeholder={jump.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
-        />
-      </label>
-      {jump.hasSecret && (
-        <label className="check">
-          <input type="checkbox" checked={p.forget} onChange={(e) => p.setForget(e.target.checked)} />
-          Забыть сохранённый {isKey ? "passphrase" : "пароль"} посредника
-        </label>
+      {jump.auth === "agent" ? (
+        <p className="hint">{AGENT_HINT}</p>
+      ) : (
+        <>
+          <label className="field">
+            <span>{isKey ? "Passphrase ключа посредника (если есть)" : "Пароль посредника"}</span>
+            <input
+              type="password"
+              value={p.secret}
+              disabled={p.forget}
+              onChange={(e) => p.setSecret(e.target.value)}
+              placeholder={jump.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
+            />
+          </label>
+          {jump.hasSecret && (
+            <label className="check">
+              <input type="checkbox" checked={p.forget} onChange={(e) => p.setForget(e.target.checked)} />
+              Забыть сохранённый {isKey ? "passphrase" : "пароль"} посредника
+            </label>
+          )}
+        </>
       )}
     </>
+  );
+}
+
+const AGENT_HINT =
+  "Ключи берутся из запущенного SSH-агента (ssh-agent; в Windows — служба OpenSSH Authentication Agent или Pageant). Пароль не нужен — добавьте ключ в агент командой ssh-add.";
+
+const AUTH_LABELS: [AuthMethod, string][] = [
+  ["password", "Пароль"],
+  ["key", "SSH-ключ"],
+  ["agent", "SSH-агент"],
+];
+
+function AuthSwitch({ value, onChange }: { value: AuthMethod; onChange: (m: AuthMethod) => void }) {
+  return (
+    <div className="segmented">
+      {AUTH_LABELS.map(([m, label]) => (
+        <button type="button" key={m} className={value === m ? "on" : ""} onClick={() => onChange(m)}>
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }

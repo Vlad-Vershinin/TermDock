@@ -1,7 +1,9 @@
 mod dragout;
 mod files;
+mod forward;
 mod scripts;
 mod ssh;
+mod sshconfig;
 mod stats;
 mod store;
 mod textcodec;
@@ -16,7 +18,8 @@ use scripts::{Script, Scripts};
 use std::collections::HashMap;
 
 use ssh::{ConnectParams, Hop, Sessions, TermEvent};
-use store::{Server, Store};
+use sshconfig::SshConfig;
+use store::{AuthMethod, Server, Store};
 
 struct Paths {
     known_hosts: PathBuf,
@@ -56,6 +59,8 @@ fn save_server(store: State<Store>, mut server: Server, secret: Option<String>, 
     }
     let previous = store.get(&server.id);
     server.has_secret = previous.as_ref().map(|p| p.has_secret).unwrap_or(false);
+    // The agent holds the keys itself: nothing to keep in the keychain.
+    let secret = if server.auth == store::AuthMethod::Agent { Some(String::new()) } else { secret };
     apply_secret(&server.id, secret.as_deref(), &mut server.has_secret)?;
 
     let jump_id = store::jump_secret_id(&server.id);
@@ -78,6 +83,7 @@ fn save_server(store: State<Store>, mut server: Server, secret: Option<String>, 
                 j.port = 22;
             }
             j.has_secret = had_jump_secret;
+            let jump_secret = if j.auth == store::AuthMethod::Agent { Some(String::new()) } else { jump_secret };
             apply_secret(&jump_id, jump_secret.as_deref(), &mut j.has_secret)?;
         }
         _ => {
@@ -140,7 +146,97 @@ fn delete_script(scripts: State<Scripts>, id: String) -> Result<(), String> {
 
 // ---------- ssh ----------
 
+/// Keychain / prompt id of a jump host taken from ~/.ssh/config.
+fn config_hop_id(alias: &str) -> String {
+    format!("sshconfig:{alias}")
+}
+
+/// Auth for a host from ~/.ssh/config: its IdentityFile, else the agent if one is running,
+/// else the first existing default key.
+fn config_auth(cfg: &sshconfig::HostConfig, host: &str, user: &str) -> (AuthMethod, Option<String>) {
+    let files: Vec<PathBuf> = cfg.identity_files.iter().map(|f| sshconfig::expand_path(f, host, user)).collect();
+    if let Some(f) = files.iter().find(|f| f.exists()).or(files.first()) {
+        return (AuthMethod::Key, Some(f.to_string_lossy().into_owned()));
+    }
+    if agent_available() {
+        return (AuthMethod::Agent, None);
+    }
+    let home = dirs::home_dir().unwrap_or_default().join(".ssh");
+    match ["id_ed25519", "id_ecdsa", "id_rsa"].iter().map(|n| home.join(n)).find(|p| p.exists()) {
+        Some(p) => (AuthMethod::Key, Some(p.to_string_lossy().into_owned())),
+        // Nothing found: the agent attempt gives a clear error.
+        None => (AuthMethod::Agent, None),
+    }
+}
+
+fn agent_available() -> bool {
+    #[cfg(windows)]
+    {
+        std::path::Path::new(r"\\.\pipe\openssh-ssh-agent").exists()
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("SSH_AUTH_SOCK").is_some_and(|s| !s.is_empty())
+    }
+}
+
+/// Hops for a ProxyJump value: each entry is resolved again through the config. Like `ssh -J`,
+/// only the first entry's own ProxyJump is followed (the rest go through the previous entry).
+fn config_jumps(cfg: &SshConfig, value: &str, seen: &mut Vec<String>) -> Result<Vec<Hop>, String> {
+    let mut hops = Vec::new();
+    for (i, spec) in sshconfig::parse_proxy_jump(value).into_iter().enumerate() {
+        let alias = spec.host.to_lowercase();
+        if seen.contains(&alias) {
+            return Err(format!("ProxyJump в ~/.ssh/config ссылается по кругу (на «{}»)", spec.host));
+        }
+        seen.push(alias);
+        let hc = cfg.resolve(&spec.host);
+        if i == 0 {
+            if let Some(pj) = &hc.proxy_jump {
+                hops.extend(config_jumps(cfg, pj, seen)?);
+            }
+        }
+        let host = hc.hostname.clone().unwrap_or_else(|| spec.host.clone());
+        let username = spec.user.clone().or(hc.user.clone()).unwrap_or_else(sshconfig::local_user);
+        let (auth, key_path) = config_auth(&hc, &host, &username);
+        let id = config_hop_id(&spec.host);
+        hops.push(Hop {
+            secret: if auth == AuthMethod::Key { store::get_secret(&id) } else { None },
+            id,
+            port: spec.port.or(hc.port).unwrap_or(22),
+            host,
+            username,
+            auth,
+            key_path,
+            accept_fingerprint: None,
+        });
+    }
+    Ok(hops)
+}
+
+/// What ~/.ssh/config says about a server's host: the real address and, when `with_jumps`,
+/// the ProxyJump chain.
+struct ConfigRoute {
+    host: String,
+    port: u16,
+    jumps: Vec<Hop>,
+}
+
+fn config_route(cfg: &SshConfig, host: &str, port: u16, with_jumps: bool) -> Result<ConfigRoute, String> {
+    let hc = cfg.resolve(host);
+    // HostName replaces the alias. The app's own port wins, except the default 22: then the
+    // config's Port applies (the dialog always has some port, 22 means "not chosen").
+    // The user is always the app's own (it is required in the dialog).
+    let real_port = if port == 22 { hc.port.unwrap_or(22) } else { port };
+    let jumps = match (&hc.proxy_jump, with_jumps) {
+        (Some(pj), true) => config_jumps(cfg, pj, &mut vec![host.to_lowercase()])?,
+        _ => Vec::new(),
+    };
+    Ok(ConfigRoute { host: hc.hostname.unwrap_or_else(|| host.to_string()), port: real_port, jumps })
+}
+
 /// Jump hosts first, the server itself last. Saved jump servers may have their own jump hosts.
+/// A server without a jump host in the app gets its ProxyJump from ~/.ssh/config, if any.
 fn resolve_hops(store: &Store, server: &Server, seen: &mut Vec<String>) -> Result<Vec<Hop>, String> {
     if seen.contains(&server.id) {
         return Err(format!("Серверы-посредники ссылаются друг на друга по кругу (на «{}»)", server.name));
@@ -168,11 +264,14 @@ fn resolve_hops(store: &Store, server: &Server, seen: &mut Vec<String>) -> Resul
         }
         _ => Vec::new(),
     };
+    // The app's own jump setting always wins over ProxyJump from ~/.ssh/config.
+    let route = config_route(&SshConfig::load(), &server.host, server.port, hops.is_empty())?;
+    hops.extend(route.jumps);
     hops.push(Hop {
         id: server.id.clone(),
         secret: if server.has_secret { store::get_secret(&server.id) } else { None },
-        host: server.host.clone(),
-        port: server.port,
+        host: route.host,
+        port: route.port,
         username: server.username.clone(),
         auth: server.auth.clone(),
         key_path: server.key_path.clone(),
@@ -182,7 +281,8 @@ fn resolve_hops(store: &Store, server: &Server, seen: &mut Vec<String>) -> Resul
 }
 
 /// `secrets` / `accept`: typed passwords and confirmed host key fingerprints, keyed by hop id
-/// (a server id, or `<server id>#jump` for a custom jump host). `remember`: hop ids whose typed
+/// (a server id, `<server id>#jump` for a custom jump host, `sshconfig:<alias>` for a jump host
+/// from ~/.ssh/config). `remember`: hop ids whose typed
 /// secret should be saved once the connection works.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -208,7 +308,7 @@ async fn ssh_connect(
         }
         hop.accept_fingerprint = accept.get(&hop.id).cloned();
     }
-    let params = ConnectParams { hops, cols, rows, known_hosts: paths.known_hosts.clone() };
+    let params = ConnectParams { hops, cols, rows, known_hosts: paths.known_hosts.clone(), forwards: server.forwards.clone() };
     let id = ssh::connect(&sessions, params, events).await?;
     // Remember passwords typed in the prompt only after they actually worked.
     for hop_id in remember.unwrap_or_default() {
@@ -229,6 +329,51 @@ async fn ssh_connect(
     Ok(id)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigJump {
+    alias: String,
+    label: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigLookup {
+    /// Real address when HostName differs from the typed host.
+    hostname: Option<String>,
+    port: u16,
+    /// ProxyJump chain, outermost first (empty when not set).
+    jumps: Vec<ConfigJump>,
+    error: Option<String>,
+}
+
+/// What ~/.ssh/config defines for a host (for hints in the UI); None when nothing relevant.
+#[tauri::command]
+fn ssh_config_lookup(host: String, port: Option<u16>) -> Option<ConfigLookup> {
+    let host = host.trim();
+    if host.is_empty() {
+        return None;
+    }
+    let port = port.unwrap_or(22);
+    let out = match config_route(&SshConfig::load(), host, port, true) {
+        Ok(r) => ConfigLookup {
+            hostname: (r.host != host).then_some(r.host),
+            port: r.port,
+            jumps: r
+                .jumps
+                .iter()
+                .map(|h| ConfigJump {
+                    alias: h.id.strip_prefix("sshconfig:").unwrap_or(&h.id).to_string(),
+                    label: h.label(),
+                })
+                .collect(),
+            error: None,
+        },
+        Err(e) => ConfigLookup { hostname: None, port, jumps: Vec::new(), error: Some(e) },
+    };
+    (out.hostname.is_some() || out.port != port || !out.jumps.is_empty() || out.error.is_some()).then_some(out)
+}
+
 #[tauri::command]
 fn ssh_write(sessions: State<Sessions>, session_id: String, data: Vec<u8>) -> Result<(), String> {
     sessions.get(&session_id)?.write(data)
@@ -244,6 +389,24 @@ async fn ssh_disconnect(sessions: State<'_, Sessions>, session_id: String) -> Re
     if let Some(s) = sessions.remove(&session_id) {
         s.close().await;
     }
+    Ok(())
+}
+
+#[tauri::command]
+async fn ssh_forwards(sessions: State<'_, Sessions>, session_id: String) -> Result<Vec<forward::ForwardStatus>, String> {
+    Ok(sessions.get(&session_id)?.forwards().status().await)
+}
+
+/// Starts (or restarts) a forward in a live session; one with a new id is session-only.
+#[tauri::command]
+async fn ssh_forward_start(sessions: State<'_, Sessions>, session_id: String, forward: store::Forward) -> Result<forward::ForwardStatus, String> {
+    Ok(sessions.get(&session_id)?.forwards().start(forward).await)
+}
+
+/// Stops a forward; `remove` also drops it from the session's list.
+#[tauri::command]
+async fn ssh_forward_stop(sessions: State<'_, Sessions>, session_id: String, id: String, remove: Option<bool>) -> Result<(), String> {
+    sessions.get(&session_id)?.forwards().stop(&id, remove.unwrap_or(false)).await;
     Ok(())
 }
 
@@ -457,9 +620,13 @@ pub fn run() {
             save_script,
             delete_script,
             ssh_connect,
+            ssh_config_lookup,
             ssh_write,
             ssh_resize,
             ssh_disconnect,
+            ssh_forwards,
+            ssh_forward_start,
+            ssh_forward_stop,
             remote_stats,
             local_home,
             local_list,
@@ -486,4 +653,63 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running TermDock");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ssh::tests::{open_accepting, port, run, test_hop};
+
+    /// Needs the sshd pair of ssh_tests (TD_SSH_PORT target, TD_SSH_PORT2 jump), a running agent
+    /// and TD_SSH_ENC_KEY: a passphrase-protected key (passphrase in TD_SSH_ENC_PASS).
+    #[tokio::test]
+    #[ignore]
+    async fn proxy_jump_from_ssh_config() {
+        let enc = std::env::var("TD_SSH_ENC_KEY").unwrap();
+        let text = format!(
+            "Host td-target\n  HostName 127.0.0.1\n  Port {}\n  ProxyJump td-b1,td-bastion\n\
+             Host td-b1\n  HostName 127.0.0.1\n  Port {}\n  User tdtest\n\
+             Host td-bastion\n  HostName 127.0.0.1\n  Port {}\n  User tdtest\n  IdentityFile {enc}\n",
+            port("TD_SSH_PORT"),
+            port("TD_SSH_PORT2"),
+            port("TD_SSH_PORT"),
+        );
+        let cfg = SshConfig::parse(&text);
+        let route = config_route(&cfg, "td-target", 22, true).unwrap();
+        assert_eq!((route.host.as_str(), route.port), ("127.0.0.1", port("TD_SSH_PORT")));
+        let ids: Vec<_> = route.jumps.iter().map(|h| h.id.clone()).collect();
+        assert_eq!(ids, ["sshconfig:td-b1", "sshconfig:td-bastion"]);
+        assert_eq!(route.jumps[0].auth, AuthMethod::Agent, "no IdentityFile + running agent");
+        assert_eq!(route.jumps[1].auth, AuthMethod::Key);
+
+        let mut target = test_hop("target", route.port, AuthMethod::Agent);
+        target.host = route.host.clone();
+        let mut hops = route.jumps;
+        hops[1].secret = None;
+        hops.push(target);
+
+        // The encrypted IdentityFile asks for its passphrase, tagged with the config hop id.
+        let e = open_accepting(hops.clone()).await.err().unwrap();
+        assert!(e.starts_with("JUMP|sshconfig:td-bastion|") && e.ends_with("|key|NEED_SECRET"), "{e}");
+        hops[1].secret = Some(std::env::var("TD_SSH_ENC_PASS").unwrap());
+        let c = open_accepting(hops).await.unwrap();
+        assert_eq!(c.jumps.len(), 2);
+        assert_eq!(run(&c.handle, "whoami").await.trim(), "tdtest");
+    }
+
+    #[test]
+    fn config_loop_is_detected() {
+        let cfg = SshConfig::parse("Host a\n  ProxyJump b\nHost b\n  ProxyJump a\n");
+        let e = config_route(&cfg, "a", 22, true).err().unwrap();
+        assert!(e.contains("по кругу"), "{e}");
+    }
+
+    #[test]
+    fn app_port_wins_unless_default() {
+        let cfg = SshConfig::parse("Host x\n  HostName real.example\n  Port 2200\n");
+        assert_eq!(config_route(&cfg, "x", 22, true).unwrap().port, 2200);
+        assert_eq!(config_route(&cfg, "x", 2022, true).unwrap().port, 2022);
+        assert_eq!(config_route(&cfg, "x", 22, true).unwrap().host, "real.example");
+        assert!(config_route(&cfg, "x", 22, false).unwrap().jumps.is_empty());
+    }
 }

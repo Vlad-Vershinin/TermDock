@@ -256,6 +256,22 @@ span.telemetry { cursor: default; }
 .tp-sub { margin: 12px 0 6px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
 .tp-disk { display: grid; grid-template-columns: 90px 1fr auto; align-items: center; gap: 10px; padding: 3px 0; font-variant-numeric: tabular-nums; }
 .tp-mount { font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ---------- port forwarding ---------- */
+.fw-pop { width: 440px; display: flex; flex-direction: column; gap: 8px; }
+.fw-pop .tp-head { margin-bottom: 2px; }
+.fw-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border-2); }
+.fw-main { flex: 1; min-width: 0; }
+.fw-addr { font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fw-status { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fw-count { margin-left: 2px; padding: 0 5px; border-radius: 8px; background: var(--bg-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+.fw-failed { color: var(--warn); }
+.fw-fields { display: grid; grid-template-columns: 1.2fr 1fr .7fr 1fr .7fr; gap: 8px; align-items: end; }
+.fw-fields .fw-span { grid-column: span 2; margin: 0 0 6px; }
+.fw-add { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border-2); }
+.fw-actions { justify-content: flex-end; gap: 8px; }
+.fw-add-btn { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; }
+.fw-edit { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--border-2); border-radius: var(--radius); }
+.fw-edit-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; }
 .session-bar { container: session / inline-size; }
 @container session (max-width: 860px) { .btn-label, .session-status { display: none; } }
 @container session (max-width: 520px) { .telemetry-wrap, .telemetry { display: none; } }
