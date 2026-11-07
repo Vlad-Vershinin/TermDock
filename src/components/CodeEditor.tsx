@@ -132,8 +132,12 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
     setStatus("ready");
     if (f.lossy)
       ui.toast(`Часть байтов не подходит к кодировке ${encodingLabel(f.encoding, f.bom)} и показана как «�». При сохранении они будут потеряны.`, "error");
-    requestAnimationFrame(() => view.current?.focus());
   };
+
+  // Focus once the editor is visible: the host is `hidden` until then and can't take focus.
+  useEffect(() => {
+    if (status === "ready") view.current?.focus();
+  }, [status, fileEnc]);
 
   useEffect(() => {
     read()
