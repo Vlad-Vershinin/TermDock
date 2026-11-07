@@ -1,0 +1,38 @@
+# Maintainer: TermDock contributors
+#
+# Builds TermDock from the local source tree (this PKGBUILD lives in packaging/arch).
+# Usage:  cd packaging/arch && makepkg -si
+pkgname=termdock
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="SSH terminal and file manager with drag & drop (Tauri)"
+arch=('x86_64')
+url="https://github.com/Vlad-Vershinin/TermDock"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'dbus' 'libsecret' 'hicolor-icon-theme')
+optdepends=('gnome-keyring: store passwords (GNOME/other DEs)'
+            'kwallet: store passwords (KDE Plasma)')
+makedepends=('rust' 'cargo' 'nodejs' 'npm' 'pkgconf')
+options=('!lto' '!debug')
+source=()
+sha256sums=()
+
+_srcroot() { realpath "$startdir/../.."; }
+
+build() {
+  cd "$(_srcroot)"
+  npm ci
+  npx tauri build --no-bundle
+}
+
+package() {
+  local root
+  root="$(_srcroot)"
+  install -Dm755 "$root/src-tauri/target/release/termdock" "$pkgdir/usr/bin/termdock"
+  install -Dm644 "$root/packaging/arch/termdock.desktop" "$pkgdir/usr/share/applications/termdock.desktop"
+  install -Dm644 "$root/src-tauri/icons/32x32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/termdock.png"
+  install -Dm644 "$root/src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/termdock.png"
+  install -Dm644 "$root/src-tauri/icons/128x128@2x.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/termdock.png"
+  install -Dm644 "$root/app-icon.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/termdock.svg"
+  install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

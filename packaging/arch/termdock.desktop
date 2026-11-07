@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=TermDock
+Comment=SSH terminal and file manager
+Exec=termdock
+Icon=termdock
+Terminal=false
+Categories=Development;Network;System;
+Keywords=ssh;sftp;terminal;server;
+StartupWMClass=termdock
