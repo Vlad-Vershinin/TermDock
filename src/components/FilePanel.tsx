@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { api, Entry, errorText, Server } from "../lib/api";
+import { api, Entry, errorText, ReadTextOptions, Server, TextEncoding, TextFile } from "../lib/api";
 import { beginDrag, DropDetail } from "../lib/dnd";
 import { remotePaneRegistry } from "../lib/sessions";
 import { dragOutLocal, dragOutRemote } from "../lib/dragout";
@@ -19,8 +19,8 @@ interface Adapter {
   remove: (p: string) => Promise<void>;
   rename: (a: string, b: string) => Promise<void>;
   createFile: (p: string) => Promise<void>;
-  readText: (p: string) => Promise<string>;
-  writeText: (p: string, text: string) => Promise<void>;
+  readText: (p: string, opts?: ReadTextOptions) => Promise<TextFile>;
+  writeText: (p: string, text: string, enc: TextEncoding) => Promise<void>;
 }
 
 function usePane(adapter: Adapter | null, side: Side) {
@@ -117,8 +117,8 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
             remove: (p) => api.remoteRemove(sessionId, p),
             rename: (a, b) => api.remoteRename(sessionId, a, b),
             createFile: (p) => api.remoteCreateFile(sessionId, p),
-            readText: (p) => api.remoteReadText(sessionId, p),
-            writeText: (p, t) => api.remoteWriteText(sessionId, p, t),
+            readText: (p, o) => api.remoteReadText(sessionId, p, o),
+            writeText: (p, t, e) => api.remoteWriteText(sessionId, p, t, e),
           }
         : null,
     [sessionId],
@@ -596,8 +596,8 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
         <Editor
           key={editing}
           title={remote ? `${title}:${editing}` : editing}
-          load={() => pane.adapter!.readText(editing)}
-          save={(t) => pane.adapter!.writeText(editing, t)}
+          load={(o) => pane.adapter!.readText(editing, o)}
+          save={(t, e) => pane.adapter!.writeText(editing, t, e)}
           onSaved={() => pane.refresh()}
           onClose={() => {
             setEditing(null);

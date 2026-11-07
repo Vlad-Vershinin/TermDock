@@ -4,6 +4,7 @@ mod scripts;
 mod ssh;
 mod stats;
 mod store;
+mod textcodec;
 
 use std::path::PathBuf;
 
@@ -287,13 +288,13 @@ async fn local_rename(from: String, to: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn local_read_text(path: String) -> Result<String, String> {
-    files::read_local_text(&path).await
+async fn local_read_text(path: String, encoding: Option<String>, allow_large: Option<bool>) -> Result<textcodec::Decoded, String> {
+    files::read_local_text(&path, encoding.as_deref(), allow_large.unwrap_or(false)).await
 }
 
 #[tauri::command]
-async fn local_write_text(path: String, content: String) -> Result<(), String> {
-    tokio::fs::write(&path, content).await.map_err(|e| format!("{path}: {e}"))
+async fn local_write_text(path: String, content: String, encoding: String, bom: bool) -> Result<(), String> {
+    files::write_local_text(&path, &content, &encoding, bom).await
 }
 
 #[tauri::command]
@@ -302,15 +303,28 @@ async fn local_create_file(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn remote_read_text(sessions: State<'_, Sessions>, session_id: String, path: String) -> Result<String, String> {
+async fn remote_read_text(
+    sessions: State<'_, Sessions>,
+    session_id: String,
+    path: String,
+    encoding: Option<String>,
+    allow_large: Option<bool>,
+) -> Result<textcodec::Decoded, String> {
     let sftp = sessions.get(&session_id)?.sftp().await?;
-    files::read_remote_text(&sftp, &path).await
+    files::read_remote_text(&sftp, &path, encoding.as_deref(), allow_large.unwrap_or(false)).await
 }
 
 #[tauri::command]
-async fn remote_write_text(sessions: State<'_, Sessions>, session_id: String, path: String, content: String) -> Result<(), String> {
+async fn remote_write_text(
+    sessions: State<'_, Sessions>,
+    session_id: String,
+    path: String,
+    content: String,
+    encoding: String,
+    bom: bool,
+) -> Result<(), String> {
     let sftp = sessions.get(&session_id)?.sftp().await?;
-    files::write_remote_text(&sftp, &path, &content).await
+    files::write_remote_text(&sftp, &path, &content, &encoding, bom).await
 }
 
 #[tauri::command]
