@@ -1,5 +1,7 @@
 mod files;
+mod scripts;
 mod ssh;
+mod stats;
 mod store;
 
 use std::path::PathBuf;
@@ -8,6 +10,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 use files::{Entry, Transfers};
+use scripts::{Script, Scripts};
 use ssh::{ConnectParams, Sessions, TermEvent};
 use store::{Server, Store};
 
@@ -56,6 +59,23 @@ fn delete_server(store: State<Store>, id: String) -> Result<(), String> {
 #[tauri::command]
 fn reorder_servers(store: State<Store>, ids: Vec<String>) -> Result<(), String> {
     store.reorder(&ids)
+}
+
+// ---------- scripts ----------
+
+#[tauri::command]
+fn list_scripts(scripts: State<Scripts>) -> Vec<Script> {
+    scripts.list()
+}
+
+#[tauri::command]
+fn save_script(scripts: State<Scripts>, script: Script) -> Result<Script, String> {
+    scripts.upsert(script)
+}
+
+#[tauri::command]
+fn delete_script(scripts: State<Scripts>, id: String) -> Result<(), String> {
+    scripts.remove(&id)
 }
 
 // ---------- ssh ----------
@@ -114,6 +134,11 @@ async fn ssh_disconnect(sessions: State<'_, Sessions>, session_id: String) -> Re
     Ok(())
 }
 
+#[tauri::command]
+async fn remote_stats(sessions: State<'_, Sessions>, session_id: String) -> Result<stats::Stats, String> {
+    sessions.get(&session_id)?.stats().await
+}
+
 // ---------- files ----------
 
 #[tauri::command]
@@ -147,6 +172,39 @@ async fn local_remove(path: String) -> Result<(), String> {
 #[tauri::command]
 async fn local_rename(from: String, to: String) -> Result<(), String> {
     tokio::fs::rename(&from, &to).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn local_read_text(path: String) -> Result<String, String> {
+    files::read_local_text(&path).await
+}
+
+#[tauri::command]
+async fn local_write_text(path: String, content: String) -> Result<(), String> {
+    tokio::fs::write(&path, content).await.map_err(|e| format!("{path}: {e}"))
+}
+
+#[tauri::command]
+async fn local_create_file(path: String) -> Result<(), String> {
+    files::create_local_file(&path).await
+}
+
+#[tauri::command]
+async fn remote_read_text(sessions: State<'_, Sessions>, session_id: String, path: String) -> Result<String, String> {
+    let sftp = sessions.get(&session_id)?.sftp().await?;
+    files::read_remote_text(&sftp, &path).await
+}
+
+#[tauri::command]
+async fn remote_write_text(sessions: State<'_, Sessions>, session_id: String, path: String, content: String) -> Result<(), String> {
+    let sftp = sessions.get(&session_id)?.sftp().await?;
+    files::write_remote_text(&sftp, &path, &content).await
+}
+
+#[tauri::command]
+async fn remote_create_file(sessions: State<'_, Sessions>, session_id: String, path: String) -> Result<(), String> {
+    let sftp = sessions.get(&session_id)?.sftp().await?;
+    files::create_remote_file(&sftp, &path).await
 }
 
 #[tauri::command]
@@ -229,6 +287,7 @@ pub fn run() {
             let dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&dir)?;
             app.manage(Store::load(dir.clone()));
+            app.manage(Scripts::load(dir.clone()));
             app.manage(Paths { known_hosts: dir.join("known_hosts") });
             app.manage(Sessions::default());
             app.manage(Transfers::default());
@@ -239,15 +298,25 @@ pub fn run() {
             save_server,
             delete_server,
             reorder_servers,
+            list_scripts,
+            save_script,
+            delete_script,
             ssh_connect,
             ssh_write,
             ssh_resize,
             ssh_disconnect,
+            remote_stats,
             local_home,
             local_list,
             local_mkdir,
             local_remove,
             local_rename,
+            local_read_text,
+            local_write_text,
+            local_create_file,
+            remote_read_text,
+            remote_write_text,
+            remote_create_file,
             remote_home,
             remote_list,
             remote_mkdir,

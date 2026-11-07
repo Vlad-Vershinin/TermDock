@@ -364,3 +364,69 @@ pub async fn download(app: AppHandle, sftp: Arc<SftpSession>, id: String, cancel
     .await;
     finish(r, res)
 }
+
+// ---------- text editing ----------
+
+/// Files larger than this are not opened in the built-in editor.
+const MAX_EDIT: u64 = 5 * 1024 * 1024;
+
+fn decode_text(path: &str, bytes: Vec<u8>) -> Result<String, String> {
+    if bytes.iter().take(8192).any(|&b| b == 0) {
+        return Err(format!("{path}: похоже на двоичный файл — встроенный редактор открывает только текст"));
+    }
+    String::from_utf8(bytes).map_err(|_| format!("{path}: файл не в кодировке UTF-8"))
+}
+
+fn too_big(path: &str, size: u64) -> Result<(), String> {
+    if size > MAX_EDIT {
+        Err(format!("{path}: файл слишком большой для редактора ({} МБ, максимум 5 МБ)", size / 1024 / 1024))
+    } else {
+        Ok(())
+    }
+}
+
+pub async fn read_local_text(path: &str) -> Result<String, String> {
+    let meta = tokio::fs::metadata(path).await.map_err(|e| format!("{path}: {e}"))?;
+    too_big(path, meta.len())?;
+    let bytes = tokio::fs::read(path).await.map_err(|e| format!("{path}: {e}"))?;
+    decode_text(path, bytes)
+}
+
+pub async fn read_remote_text(sftp: &SftpSession, path: &str) -> Result<String, String> {
+    let meta = sftp.metadata(path).await.map_err(|e| format!("{path}: {e}"))?;
+    too_big(path, meta.size.unwrap_or(0))?;
+    let bytes = sftp.read(path).await.map_err(|e| format!("{path}: {e}"))?;
+    decode_text(path, bytes)
+}
+
+/// Overwrites (truncates) the file, keeping its permissions.
+pub async fn write_remote_text(sftp: &SftpSession, path: &str, content: &str) -> Result<(), String> {
+    let mut f = sftp
+        .open_with_flags(path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+        .await
+        .map_err(|e| format!("{path}: {e}"))?;
+    f.write_all(content.as_bytes()).await.map_err(|e| format!("{path}: {e}"))?;
+    f.shutdown().await.map_err(|e| format!("{path}: {e}"))
+}
+
+/// Creates an empty file; fails if it already exists.
+pub async fn create_remote_file(sftp: &SftpSession, path: &str) -> Result<(), String> {
+    if sftp.try_exists(path).await.unwrap_or(false) {
+        return Err(format!("{path}: уже существует"));
+    }
+    let mut f = sftp
+        .open_with_flags(path, OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE)
+        .await
+        .map_err(|e| format!("{path}: {e}"))?;
+    f.shutdown().await.map_err(|e| format!("{path}: {e}"))
+}
+
+pub async fn create_local_file(path: &str) -> Result<(), String> {
+    tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .await
+        .map(|_| ())
+        .map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { format!("{path}: уже существует") } else { format!("{path}: {e}") })
+}

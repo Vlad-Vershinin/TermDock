@@ -39,12 +39,46 @@ export interface Progress {
   error?: string | null;
 }
 
+export interface Script {
+  id: string;
+  name: string;
+  description?: string | null;
+  body: string;
+  /** terminal: typed into the shell; bash: run as one bash script */
+  mode: "terminal" | "bash";
+}
+
+export interface Disk {
+  fs: string;
+  mount: string;
+  total: number;
+  used: number;
+}
+
+export interface Stats {
+  cpu?: number | null;
+  cpus?: number | null;
+  load?: [number, number, number] | null;
+  memTotal: number;
+  memUsed: number;
+  swapTotal: number;
+  swapUsed: number;
+  uptime?: number | null;
+  disks: Disk[];
+  os?: string | null;
+  hostname?: string | null;
+}
+
 export const api = {
   listServers: () => invoke<Server[]>("list_servers"),
   /** secret: undefined = keep, "" = forget, string = save */
   saveServer: (server: Server, secret?: string) => invoke<Server>("save_server", { server, secret }),
   deleteServer: (id: string) => invoke<void>("delete_server", { id }),
   reorderServers: (ids: string[]) => invoke<void>("reorder_servers", { ids }),
+
+  listScripts: () => invoke<Script[]>("list_scripts"),
+  saveScript: (script: Script) => invoke<Script>("save_script", { script }),
+  deleteScript: (id: string) => invoke<void>("delete_script", { id }),
 
   connect: (args: {
     serverId: string;
@@ -71,11 +105,21 @@ export const api = {
   resize: (sessionId: string, cols: number, rows: number) => invoke<void>("ssh_resize", { sessionId, cols, rows }),
   disconnect: (sessionId: string) => invoke<void>("ssh_disconnect", { sessionId }),
 
+  stats: (sessionId: string) => invoke<Stats>("remote_stats", { sessionId }),
+
   localHome: () => invoke<string>("local_home"),
   localList: (path: string) => invoke<Entry[]>("local_list", { path }),
   localMkdir: (path: string) => invoke<void>("local_mkdir", { path }),
   localRemove: (path: string) => invoke<void>("local_remove", { path }),
   localRename: (from: string, to: string) => invoke<void>("local_rename", { from, to }),
+
+  localReadText: (path: string) => invoke<string>("local_read_text", { path }),
+  localWriteText: (path: string, content: string) => invoke<void>("local_write_text", { path, content }),
+  localCreateFile: (path: string) => invoke<void>("local_create_file", { path }),
+
+  remoteReadText: (sessionId: string, path: string) => invoke<string>("remote_read_text", { sessionId, path }),
+  remoteWriteText: (sessionId: string, path: string, content: string) => invoke<void>("remote_write_text", { sessionId, path, content }),
+  remoteCreateFile: (sessionId: string, path: string) => invoke<void>("remote_create_file", { sessionId, path }),
 
   remoteHome: (sessionId: string) => invoke<string>("remote_home", { sessionId }),
   remoteList: (sessionId: string, path: string) => invoke<Entry[]>("remote_list", { sessionId, path }),

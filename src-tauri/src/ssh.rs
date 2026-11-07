@@ -92,10 +92,19 @@ pub enum TermEvent {
     Closed { reason: String },
 }
 
+#[derive(Default, Serialize)]
+pub struct ExecOutput {
+    pub code: Option<u32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
 pub struct SshSession {
     handle: Arc<Handle<Client>>,
     input: mpsc::UnboundedSender<Input>,
     sftp: tokio::sync::Mutex<Option<Arc<SftpSession>>>,
+    /// Previous /proc/stat sample (idle, total) for CPU usage deltas.
+    cpu_prev: Mutex<Option<(u64, u64)>>,
 }
 
 enum Input {
@@ -244,6 +253,7 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<Term
         handle: Arc::new(handle),
         input: tx,
         sftp: tokio::sync::Mutex::new(None),
+        cpu_prev: Mutex::new(None),
     });
     sessions.insert(id.clone(), session);
 
@@ -303,6 +313,47 @@ impl SshSession {
         let sftp = Arc::new(sftp);
         *guard = Some(sftp.clone());
         Ok(sftp)
+    }
+
+    /// Runs a command on a separate exec channel (not in the user's shell) and collects its output.
+    pub async fn exec(&self, command: &str, timeout: Duration) -> Result<ExecOutput, String> {
+        let run = async {
+            let mut ch = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
+            ch.exec(true, command).await.map_err(|e| e.to_string())?;
+            let mut out = ExecOutput::default();
+            while let Some(msg) = ch.wait().await {
+                match msg {
+                    ChannelMsg::Data { data } => out.stdout.extend_from_slice(&data),
+                    ChannelMsg::ExtendedData { data, .. } => out.stderr.extend_from_slice(&data),
+                    ChannelMsg::ExitStatus { exit_status } => out.code = Some(exit_status),
+                    ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+            Ok(out)
+        };
+        tokio::time::timeout(timeout, run).await.map_err(|_| "Таймаут выполнения команды".to_string())?
+    }
+
+    /// Basic server telemetry (Linux: /proc + df).
+    pub async fn stats(&self) -> Result<crate::stats::Stats, String> {
+        let out = self.exec(crate::stats::COMMAND, Duration::from_secs(10)).await?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut stats = crate::stats::parse(&text);
+        if let Some((idle, total)) = stats.cpu_sample {
+            let mut prev = self.cpu_prev.lock().unwrap();
+            if let Some((pi, pt)) = *prev {
+                let (di, dt) = (idle.saturating_sub(pi), total.saturating_sub(pt));
+                if dt > 0 {
+                    stats.cpu = Some(100.0 * (1.0 - di as f32 / dt as f32));
+                }
+            }
+            *prev = Some((idle, total));
+        }
+        if stats.mem_total == 0 {
+            return Err("Телеметрия доступна только для Linux-серверов".into());
+        }
+        Ok(stats)
     }
 
     pub async fn close(&self) {
