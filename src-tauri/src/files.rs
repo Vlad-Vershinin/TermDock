@@ -10,7 +10,7 @@ use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -200,12 +200,14 @@ impl Reporter {
 
 const CHUNK: usize = 256 * 1024;
 
-enum Item {
-    Dir(String),
-    File { local: PathBuf, remote: String, size: u64 },
+/// One planned step of a transfer. `S`/`D` are the source/destination path types
+/// (PathBuf for the local side, String for a remote one).
+enum Item<S, D> {
+    Dir(D),
+    File { src: S, dst: D, size: u64, mode: Option<u32> },
 }
 
-fn plan_upload(local: &Path, remote_dir: &str, out: &mut Vec<Item>) -> Result<(), String> {
+fn plan_upload(local: &Path, remote_dir: &str, out: &mut Vec<Item<PathBuf, String>>) -> Result<(), String> {
     let name = local.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or("Некорректный путь")?;
     let remote = join_remote(remote_dir, &name);
     let meta = std::fs::metadata(local).map_err(|e| format!("{}: {e}", local.display()))?;
@@ -215,33 +217,34 @@ fn plan_upload(local: &Path, remote_dir: &str, out: &mut Vec<Item>) -> Result<()
             plan_upload(&e.path(), &remote, out)?;
         }
     } else {
-        out.push(Item::File { local: local.to_path_buf(), remote, size: meta.len() });
+        out.push(Item::File { src: local.to_path_buf(), dst: remote, size: meta.len(), mode: None });
     }
     Ok(())
 }
 
-async fn plan_download(sftp: &SftpSession, remote: &str, local_dir: &Path, out: &mut Vec<Item>) -> Result<(), String> {
+/// Walks a remote tree; `join(dir, name)` builds destination paths (local or remote).
+async fn plan_remote<D: Clone>(sftp: &SftpSession, remote: &str, dst_dir: D, join: impl Fn(&D, &str) -> D, out: &mut Vec<Item<String, D>>) -> Result<(), String> {
     // Iterative walk (async recursion would need boxing).
-    let mut stack = vec![(remote.to_string(), local_dir.to_path_buf())];
-    while let Some((rpath, ldir)) = stack.pop() {
+    let mut stack = vec![(remote.to_string(), dst_dir)];
+    while let Some((rpath, ddir)) = stack.pop() {
         let meta = sftp.metadata(rpath.clone()).await.map_err(|e| format!("{rpath}: {e}"))?;
-        let local = ldir.join(remote_name(&rpath));
+        let dst = join(&ddir, &remote_name(&rpath));
         if meta.is_dir() {
-            out.push(Item::Dir(local.to_string_lossy().into_owned()));
+            out.push(Item::Dir(dst.clone()));
             for e in sftp.read_dir(rpath.clone()).await.map_err(|e| e.to_string())? {
                 let n = e.file_name();
                 if n != "." && n != ".." {
-                    stack.push((join_remote(&rpath, &n), local.clone()));
+                    stack.push((join_remote(&rpath, &n), dst.clone()));
                 }
             }
         } else {
-            out.push(Item::File { local, remote: rpath, size: meta.size.unwrap_or(0) });
+            out.push(Item::File { src: rpath, dst, size: meta.size.unwrap_or(0), mode: meta.permissions });
         }
     }
     Ok(())
 }
 
-fn new_reporter(app: AppHandle, id: &str, cancel: Arc<AtomicBool>, items: &[Item]) -> Reporter {
+fn new_reporter<S, D>(app: AppHandle, id: &str, cancel: Arc<AtomicBool>, items: &[Item<S, D>]) -> Reporter {
     let (total, files) = items.iter().fold((0u64, 0u32), |(t, n), i| match i {
         Item::File { size, .. } => (t + size, n + 1),
         Item::Dir(_) => (t, n),
@@ -276,6 +279,39 @@ fn finish(mut r: Reporter, res: Result<(), String>) -> Result<(), String> {
     res
 }
 
+/// Streams `src` into `dst` chunk by chunk, reporting progress and honouring cancel.
+async fn pump<R, W>(r: &mut Reporter, src: &mut R, dst: &mut W, src_name: &str, dst_name: &str) -> Result<(), String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut buf = vec![0u8; CHUNK];
+    loop {
+        r.check_cancel()?;
+        let n = src.read(&mut buf).await.map_err(|e| format!("{src_name}: {e}"))?;
+        if n == 0 {
+            return Ok(());
+        }
+        dst.write_all(&buf[..n]).await.map_err(|e| format!("{dst_name}: {e}"))?;
+        r.p.transferred += n as u64;
+        r.emit(false);
+    }
+}
+
+/// Creates a remote directory, ignoring "already exists".
+async fn ensure_remote_dir(sftp: &SftpSession, d: &str) -> Result<(), String> {
+    if sftp.create_dir(d).await.is_err() && !sftp.try_exists(d).await.unwrap_or(false) {
+        return Err(format!("Не удалось создать каталог {d}"));
+    }
+    Ok(())
+}
+
+async fn create_remote(sftp: &SftpSession, path: &str) -> Result<russh_sftp::client::fs::File, String> {
+    sftp.open_with_flags(path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+        .await
+        .map_err(|e| format!("{path}: {e}"))
+}
+
 pub async fn upload(app: AppHandle, sftp: Arc<SftpSession>, id: String, cancel: Arc<AtomicBool>, locals: Vec<String>, remote_dir: String) -> Result<(), String> {
     let mut items = vec![];
     for l in &locals {
@@ -287,31 +323,13 @@ pub async fn upload(app: AppHandle, sftp: Arc<SftpSession>, id: String, cancel: 
         for item in &items {
             r.check_cancel()?;
             match item {
-                Item::Dir(d) => {
-                    // Ignore "already exists".
-                    if sftp.create_dir(d.clone()).await.is_err() && !sftp.try_exists(d.clone()).await.unwrap_or(false) {
-                        return Err(format!("Не удалось создать каталог {d}"));
-                    }
-                }
-                Item::File { local, remote, .. } => {
+                Item::Dir(d) => ensure_remote_dir(&sftp, d).await?,
+                Item::File { src: local, dst: remote, .. } => {
                     r.p.current = remote.clone();
                     r.emit(true);
                     let mut src = tokio::fs::File::open(local).await.map_err(|e| format!("{}: {e}", local.display()))?;
-                    let mut dst = sftp
-                        .open_with_flags(remote.clone(), OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
-                        .await
-                        .map_err(|e| format!("{remote}: {e}"))?;
-                    let mut buf = vec![0u8; CHUNK];
-                    loop {
-                        r.check_cancel()?;
-                        let n = src.read(&mut buf).await.map_err(|e| e.to_string())?;
-                        if n == 0 {
-                            break;
-                        }
-                        dst.write_all(&buf[..n]).await.map_err(|e| format!("{remote}: {e}"))?;
-                        r.p.transferred += n as u64;
-                        r.emit(false);
-                    }
+                    let mut dst = create_remote(&sftp, remote).await?;
+                    pump(&mut r, &mut src, &mut dst, &local.to_string_lossy(), remote).await?;
                     dst.shutdown().await.map_err(|e| e.to_string())?;
                     r.p.files_done += 1;
                 }
@@ -326,7 +344,7 @@ pub async fn upload(app: AppHandle, sftp: Arc<SftpSession>, id: String, cancel: 
 pub async fn download(app: AppHandle, sftp: Arc<SftpSession>, id: String, cancel: Arc<AtomicBool>, remotes: Vec<String>, local_dir: String) -> Result<(), String> {
     let mut items = vec![];
     for rp in &remotes {
-        plan_download(&sftp, rp, Path::new(&local_dir), &mut items).await?;
+        plan_remote(&sftp, rp, PathBuf::from(&local_dir), |d: &PathBuf, n| d.join(n), &mut items).await?;
     }
     let mut r = new_reporter(app, &id, cancel, &items);
     r.emit(true);
@@ -334,8 +352,8 @@ pub async fn download(app: AppHandle, sftp: Arc<SftpSession>, id: String, cancel
         for item in &items {
             r.check_cancel()?;
             match item {
-                Item::Dir(d) => tokio::fs::create_dir_all(d).await.map_err(|e| format!("{d}: {e}"))?,
-                Item::File { local, remote, .. } => {
+                Item::Dir(d) => tokio::fs::create_dir_all(d).await.map_err(|e| format!("{}: {e}", d.display()))?,
+                Item::File { src: remote, dst: local, .. } => {
                     r.p.current = remote.clone();
                     r.emit(true);
                     let mut src = sftp.open(remote.clone()).await.map_err(|e| format!("{remote}: {e}"))?;
@@ -343,18 +361,74 @@ pub async fn download(app: AppHandle, sftp: Arc<SftpSession>, id: String, cancel
                         let _ = tokio::fs::create_dir_all(parent).await;
                     }
                     let mut dst = tokio::fs::File::create(local).await.map_err(|e| format!("{}: {e}", local.display()))?;
-                    let mut buf = vec![0u8; CHUNK];
-                    loop {
-                        r.check_cancel()?;
-                        let n = src.read(&mut buf).await.map_err(|e| format!("{remote}: {e}"))?;
-                        if n == 0 {
-                            break;
-                        }
-                        dst.write_all(&buf[..n]).await.map_err(|e| e.to_string())?;
-                        r.p.transferred += n as u64;
-                        r.emit(false);
-                    }
+                    pump(&mut r, &mut src, &mut dst, remote, &local.to_string_lossy()).await?;
                     dst.flush().await.map_err(|e| e.to_string())?;
+                    r.p.files_done += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+    .await;
+    finish(r, res)
+}
+
+/// Rejects copies that would overwrite their own source or nest a folder in itself.
+/// Only meaningful when source and destination are the same server.
+fn check_same_server(remotes: &[String], dst_dir: &str) -> Result<(), String> {
+    let dst = dst_dir.trim_end_matches('/');
+    for rp in remotes {
+        let src = rp.trim_end_matches('/');
+        let parent = src.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+        if parent == dst {
+            return Err(format!("{src}: файл уже находится в этой папке"));
+        }
+        if dst == src || dst.starts_with(&format!("{src}/")) {
+            return Err(format!("{src}: нельзя скопировать папку внутрь самой себя"));
+        }
+    }
+    Ok(())
+}
+
+/// Copies remote files/folders from one SFTP session to another (or within one),
+/// streaming the data through this machine without temp files.
+#[allow(clippy::too_many_arguments)]
+pub async fn copy_remote(
+    app: AppHandle,
+    src_sftp: Arc<SftpSession>,
+    dst_sftp: Arc<SftpSession>,
+    same_session: bool,
+    id: String,
+    cancel: Arc<AtomicBool>,
+    remotes: Vec<String>,
+    dst_dir: String,
+) -> Result<(), String> {
+    if same_session {
+        check_same_server(&remotes, &dst_dir)?;
+    }
+    let mut items = vec![];
+    for rp in &remotes {
+        plan_remote(&src_sftp, rp, dst_dir.clone(), |d: &String, n| join_remote(d, n), &mut items).await?;
+    }
+    let mut r = new_reporter(app, &id, cancel, &items);
+    r.emit(true);
+    let res = async {
+        for item in &items {
+            r.check_cancel()?;
+            match item {
+                Item::Dir(d) => ensure_remote_dir(&dst_sftp, d).await?,
+                Item::File { src: from, dst: to, mode, .. } => {
+                    r.p.current = from.clone();
+                    r.emit(true);
+                    let mut src = src_sftp.open(from.clone()).await.map_err(|e| format!("{from}: {e}"))?;
+                    let mut dst = create_remote(&dst_sftp, to).await?;
+                    pump(&mut r, &mut src, &mut dst, from, to).await?;
+                    dst.shutdown().await.map_err(|e| format!("{to}: {e}"))?;
+                    if let Some(m) = mode {
+                        // Best effort: keep the permission bits (e.g. executables).
+                        let attrs = russh_sftp::protocol::FileAttributes { permissions: Some(m & 0o7777), ..Default::default() };
+                        let _ = dst_sftp.set_metadata(to.clone(), attrs).await;
+                    }
                     r.p.files_done += 1;
                 }
             }
@@ -429,4 +503,21 @@ pub async fn create_local_file(path: &str) -> Result<(), String> {
         .await
         .map(|_| ())
         .map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { format!("{path}: уже существует") } else { format!("{path}: {e}") })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_same_server;
+
+    #[test]
+    fn same_server_guard() {
+        let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(check_same_server(&v(&["/a/f.txt"]), "/a").is_err());
+        assert!(check_same_server(&v(&["/a/f.txt"]), "/a/").is_err());
+        assert!(check_same_server(&v(&["/a/d"]), "/a/d/sub").is_err());
+        assert!(check_same_server(&v(&["/a/d"]), "/a/d").is_err());
+        assert!(check_same_server(&v(&["/f"]), "/").is_err());
+        assert!(check_same_server(&v(&["/a/d"]), "/a/dd").is_ok());
+        assert!(check_same_server(&v(&["/a/f.txt"]), "/b").is_ok());
+    }
 }

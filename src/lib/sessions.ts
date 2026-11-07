@@ -16,3 +16,24 @@ export const paneRegistry = {
   delete: (id: string) => void panes.delete(id),
   get: (id: string | null | undefined) => (id ? panes.get(id) : undefined),
 };
+
+// Remote file panes with an open SFTP session, for server-to-server copies.
+
+export interface RemotePaneHandle {
+  serverId: string;
+  serverName: string;
+  sessionId: string;
+  /** Folder currently open in the pane (null while loading). */
+  dir: () => string | null;
+  refresh: () => void;
+}
+
+const remotePanes = new Map<string, RemotePaneHandle>();
+
+export const remotePaneRegistry = {
+  set: (paneId: string, h: RemotePaneHandle) => void remotePanes.set(paneId, h),
+  delete: (paneId: string) => void remotePanes.delete(paneId),
+  get: (paneId: string) => remotePanes.get(paneId),
+  /** All registered panes except `paneId`, in registration order. */
+  others: (paneId: string) => [...remotePanes].filter(([id]) => id !== paneId).map(([id, h]) => ({ paneId: id, ...h })),
+};

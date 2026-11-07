@@ -3,11 +3,12 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api, Entry, errorText, Server } from "../lib/api";
 import { beginDrag, DropDetail } from "../lib/dnd";
+import { remotePaneRegistry } from "../lib/sessions";
 import { baseName, formatDate, formatMode, formatSize, joinPath, parentPath } from "../lib/paths";
 import { useTransfers } from "../lib/transfers";
 import { MenuItem, useUi } from "../lib/ui";
 import { Editor } from "./Editor";
-import { IArchive, ICopy, IDownload, IEdit, IEye, IFile, IFileCode, IFilePlus, IFolder, IFolderPlus, IImage, IMonitor, IRefresh, IServer, ITerminal, ITrash, IUp, IUpload } from "./Icons";
+import { IArchive, ICopy, ICopyServer, IDownload, IEdit, IEye, IFile, IFileCode, IFilePlus, IFolder, IFolderPlus, IImage, IMonitor, IRefresh, IServer, ITerminal, ITrash, IUp, IUpload } from "./Icons";
 
 type Side = "local" | "remote";
 
@@ -150,6 +151,21 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
 
   useEffect(() => onRemoteDir(remote.dir), [remote.dir, onRemoteDir]);
 
+  // Expose this remote pane to other panes for server-to-server copies.
+  const remoteRef = useRef(remote);
+  remoteRef.current = remote;
+  useEffect(() => {
+    if (!sessionId) return;
+    remotePaneRegistry.set(tabId, {
+      serverId: server.id,
+      serverName: server.name || server.host,
+      sessionId,
+      dir: () => remoteRef.current.dir,
+      refresh: () => remoteRef.current.refresh(),
+    });
+    return () => remotePaneRegistry.delete(tabId);
+  }, [tabId, sessionId, server.id, server.name, server.host]);
+
   const upload = async (paths: string[], dir?: string) => {
     const dest = dir ?? remote.dir;
     if (!sessionId || !dest || paths.length === 0) return;
@@ -163,6 +179,35 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
     if (dest === "") return ui.toast("Выберите папку на диске", "error");
     await transfers.start({ direction: "down", sessionId, server: server.name, sources: paths, dest });
     local.refresh();
+  };
+
+  /** Copies remote paths from one pane's server into a folder of another pane's server. */
+  const copyBetween = async (fromPane: string, toPane: string, paths: string[], dir?: string) => {
+    const src = remotePaneRegistry.get(fromPane);
+    const dst = remotePaneRegistry.get(toPane);
+    if (!src || !dst) return ui.toast("Сервер отключён или его панель файлов закрыта", "error");
+    const dest = dir ?? dst.dir();
+    if (!dest || paths.length === 0) return;
+    // Two sessions to one server share a filesystem: never overwrite the source with itself.
+    if (src.serverId === dst.serverId) {
+      const clash = selfCopyClash(paths, dest);
+      if (clash) return ui.toast(clash, "error");
+    }
+    await transfers.start({ direction: "copy", sessionId: src.sessionId, server: src.serverName, sources: paths, dest, dstSessionId: dst.sessionId, dstServer: dst.serverName });
+    remotePaneRegistry.get(toPane)?.refresh();
+  };
+
+  const copyMenu = (paths: string[]): MenuItem[] => {
+    const others = remotePaneRegistry.others(tabId);
+    return [
+      { header: "Копировать на другой сервер" },
+      ...(others.length === 0
+        ? [{ label: "Нет других подключённых серверов", hint: "откройте его в соседней панели или вкладке", disabled: true, onClick: () => {} }]
+        : others.map((o) => {
+            const dir = o.dir();
+            return { label: `${o.serverName}: ${dir ?? "…"}`, icon: <ICopyServer size={13} />, disabled: !dir, onClick: () => copyBetween(tabId, o.paneId, paths) };
+          })),
+    ];
   };
 
   const move = async (pane: Pane, paths: string[], dir: string) => {
@@ -183,7 +228,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
     if (pane.side === "remote") {
       if (source.kind === "local" || source.kind === "os") upload(source.paths, d.dir);
       else if (source.kind === "remote" && source.tabId === tabId && d.dir) move(pane, source.paths, d.dir);
-      else if (source.kind === "remote") ui.toast("Перенос между разными серверами пока не поддерживается", "error");
+      else if (source.kind === "remote" && source.tabId !== tabId) copyBetween(source.tabId, tabId, source.paths, d.dir);
     } else {
       if (source.kind === "remote") {
         if (source.tabId !== tabId) return ui.toast("Перетащите файлы в панель ПК этой же вкладки", "error");
@@ -225,6 +270,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
         onOpenFile={(e) => download([e.path])}
         transfer={{ label: "Скачать на компьютер", icon: <IDownload size={13} />, run: download }}
         onCd={onCd}
+        extraMenu={sessionId ? copyMenu : undefined}
         extra={
           <>
             <button className="btn btn-sm" disabled={remote.selected.size === 0} onClick={() => download(selectedPaths(remote))} title="Скачать выбранное на компьютер">
@@ -252,9 +298,11 @@ interface PaneProps {
   /** Upload (local pane) / download (remote pane) for the context menu. */
   transfer?: { label: string; icon: React.ReactNode; run: (paths: string[]) => void };
   onCd?: (dir: string) => void;
+  /** Extra context-menu items for the selected paths (server-to-server copy). */
+  extraMenu?: (paths: string[]) => MenuItem[];
 }
 
-function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onOpenFile, transfer, onCd }: PaneProps) {
+function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onOpenFile, transfer, onCd, extraMenu }: PaneProps) {
   const ui = useUi();
   const [editing, setEditing] = useState<string | null>(null);
   const zoneRef = useRef<HTMLDivElement>(null);
@@ -364,6 +412,7 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
         : { label: "Редактировать", icon: <IEdit size={13} />, hint: "F4", disabled: !single, onClick: () => edit(entry) },
       ...(single && entry.isDir && onCd ? [{ label: "Перейти в терминале", icon: <ITerminal size={13} />, onClick: () => onCd(entry.path) }] : []),
       ...(transfer ? [{ label: transfer.label, icon: transfer.icon, onClick: () => transfer.run(paths) }] : []),
+      ...(extraMenu ? ["-" as const, ...extraMenu(paths)] : []),
       "-",
       { label: "Переименовать…", icon: <IEdit size={13} />, hint: "F2", disabled: !single, onClick: rename },
       { label: single ? "Копировать путь" : "Копировать пути", icon: <ICopy size={13} />, onClick: () => copyPaths(paths) },
@@ -539,6 +588,17 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
       )}
     </div>
   );
+}
+
+/** Error text when copying `paths` into `dest` on the same filesystem would hit the source itself. */
+function selfCopyClash(paths: string[], dest: string): string | null {
+  const d = dest.replace(/\/+$/, "");
+  for (const p of paths) {
+    const src = p.replace(/\/+$/, "");
+    if (parentPath(src, true).replace(/\/+$/, "") === d) return `${baseName(src)}: уже находится в этой папке`;
+    if (d === src || d.startsWith(`${src}/`)) return `${baseName(src)}: нельзя скопировать папку внутрь самой себя`;
+  }
+  return null;
 }
 
 function fileIcon(name: string) {

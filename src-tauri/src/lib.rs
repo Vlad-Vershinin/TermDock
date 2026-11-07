@@ -383,6 +383,29 @@ async fn download(
     res
 }
 
+/// Copies remote paths from one session's server to a folder on another session's
+/// server (or the same one), streaming through this app. Progress: `transfer-progress`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn copy_between(
+    app: AppHandle,
+    sessions: State<'_, Sessions>,
+    transfers: State<'_, Transfers>,
+    src_session_id: String,
+    transfer_id: String,
+    remote_paths: Vec<String>,
+    dst_session_id: String,
+    dst_dir: String,
+) -> Result<(), String> {
+    let src = sessions.get(&src_session_id)?.sftp().await?;
+    let dst = sessions.get(&dst_session_id)?.sftp().await?;
+    let same = src_session_id == dst_session_id;
+    let cancel = transfers.register(&transfer_id);
+    let res = files::copy_remote(app.clone(), src, dst, same, transfer_id.clone(), cancel, remote_paths, dst_dir).await;
+    app.state::<Transfers>().finish(&transfer_id);
+    res
+}
+
 #[tauri::command]
 fn cancel_transfer(transfers: State<Transfers>, transfer_id: String) {
     transfers.cancel(&transfer_id);
@@ -439,6 +462,7 @@ pub fn run() {
             remote_rename,
             upload,
             download,
+            copy_between,
             cancel_transfer,
         ])
         .run(tauri::generate_context!())

@@ -83,6 +83,13 @@ export const ICopy = svg(
   </>,
 );
 export const ITransfer = svg(<path d="M7 4v16M3 8l4-4 4 4M17 20V4M21 16l-4 4-4-4" />);
+export const ICopyServer = svg(
+  <>
+    <rect x="2" y="7" width="6" height="10" rx="1" />
+    <rect x="16" y="7" width="6" height="10" rx="1" />
+    <path d="M10 12h4M12.5 10l2 2-2 2" />
+  </>,
+);
 export const IUpload = svg(<path d="M12 16V4M7 9l5-5 5 5M4 20h16" />);
 export const IDownload = svg(<path d="M12 4v12M7 11l5 5 5-5M4 20h16" />);
 export const ITerminal = svg(<path d="M4 17l6-5-6-5M12 19h8" />);

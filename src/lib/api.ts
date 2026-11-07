@@ -161,6 +161,8 @@ export const api = {
     invoke<void>("upload", { sessionId, transferId, localPaths, remoteDir }),
   download: (sessionId: string, transferId: string, remotePaths: string[], localDir: string) =>
     invoke<void>("download", { sessionId, transferId, remotePaths, localDir }),
+  copyBetween: (srcSessionId: string, transferId: string, remotePaths: string[], dstSessionId: string, dstDir: string) =>
+    invoke<void>("copy_between", { srcSessionId, transferId, remotePaths, dstSessionId, dstDir }),
   cancelTransfer: (transferId: string) => invoke<void>("cancel_transfer", { transferId }),
 };
 

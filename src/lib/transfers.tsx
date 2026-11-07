@@ -3,21 +3,27 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useState 
 import { api, errorText, Progress } from "./api";
 import { baseName, formatSize } from "./paths";
 import { useUi } from "./ui";
-import { IClose, IDownload, IUpload } from "../components/Icons";
+import { IClose, ICopyServer, IDownload, IUpload } from "../components/Icons";
 
 export interface Transfer {
   id: string;
-  direction: "up" | "down";
+  direction: "up" | "down" | "copy";
   label: string;
+  /** Server name; "src → dst" for server-to-server copies. */
   server: string;
   dest: string;
   progress: Progress;
   startedAt: number;
 }
 
+type StartArgs =
+  | { direction: "up" | "down"; sessionId: string; server: string; sources: string[]; dest: string }
+  /** Server-to-server: `sessionId`/`server` are the source, `dest` is a folder on the destination. */
+  | { direction: "copy"; sessionId: string; server: string; sources: string[]; dest: string; dstSessionId: string; dstServer: string };
+
 interface Ctx {
   transfers: Transfer[];
-  start: (args: { direction: "up" | "down"; sessionId: string; server: string; sources: string[]; dest: string }) => Promise<boolean>;
+  start: (args: StartArgs) => Promise<boolean>;
   cancel: (id: string) => void;
   clearFinished: () => void;
 }
@@ -39,15 +45,19 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const start: Ctx["start"] = useCallback(
-    async ({ direction, sessionId, server, sources, dest }) => {
+    async (args) => {
+      const { direction, sessionId, sources, dest } = args;
+      const server = args.direction === "copy" ? `${args.server} → ${args.dstServer}` : args.server;
       const id = crypto.randomUUID();
       const label = sources.length === 1 ? baseName(sources[0]) : `${sources.length} объектов`;
       const progress: Progress = { id, transferred: 0, total: 0, filesDone: 0, filesTotal: 0, current: "", status: "running" };
       setTransfers((l) => [{ id, direction, label, server, dest, progress, startedAt: Date.now() }, ...l]);
       try {
-        if (direction === "up") await api.upload(sessionId, id, sources, dest);
+        if (args.direction === "copy") await api.copyBetween(sessionId, id, sources, args.dstSessionId, dest);
+        else if (direction === "up") await api.upload(sessionId, id, sources, dest);
         else await api.download(sessionId, id, sources, dest);
-        toast(`${direction === "up" ? "Загружено" : "Скачано"}: ${label}`, "success");
+        const done = direction === "copy" ? `Скопировано (${server})` : direction === "up" ? "Загружено" : "Скачано";
+        toast(`${done}: ${label}`, "success");
         return true;
       } catch (e) {
         const msg = errorText(e);
@@ -99,8 +109,8 @@ export function TransfersPanel({ onClose }: { onClose: () => void }) {
           return (
             <div key={t.id} className={`transfer transfer-${p.status}`}>
               <div className="transfer-row">
-                <span className="transfer-dir">{t.direction === "up" ? <IUpload /> : <IDownload />}</span>
-                <span className="transfer-label" title={t.label}>
+                <span className="transfer-dir">{t.direction === "up" ? <IUpload /> : t.direction === "down" ? <IDownload /> : <ICopyServer />}</span>
+                <span className="transfer-label" title={t.direction === "copy" ? `${t.label}: ${t.server}` : t.label}>
                   {t.label}
                 </span>
                 {p.status === "running" && (
@@ -115,6 +125,7 @@ export function TransfersPanel({ onClose }: { onClose: () => void }) {
               <div className="transfer-meta">
                 {p.status === "running" && (
                   <>
+                    {t.direction === "copy" && <>{t.server} · </>}
                     {formatSize(p.transferred)} / {formatSize(p.total)} · {p.filesDone}/{p.filesTotal} файл. ·{" "}
                     {formatSize(speed)}/с
                   </>
