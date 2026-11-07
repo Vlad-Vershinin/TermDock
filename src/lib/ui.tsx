@@ -19,11 +19,26 @@ interface DialogSpec {
 
 type DialogResult = Record<string, string | boolean> | null;
 
+// ---------- context menu ----------
+
+export type MenuItem =
+  | { label: string; icon?: ReactNode; hint?: string; danger?: boolean; disabled?: boolean; onClick: () => void }
+  | { header: string }
+  | "-";
+
+interface MenuState {
+  x: number;
+  y: number;
+  items: MenuItem[];
+}
+
 interface Ui {
   toast: (text: string, kind?: Toast["kind"]) => void;
   dialog: (spec: DialogSpec) => Promise<DialogResult>;
   confirm: (title: string, message?: ReactNode, danger?: boolean) => Promise<boolean>;
   prompt: (title: string, label: string, value?: string) => Promise<string | null>;
+  /** Opens a context menu at the pointer (or below an element when `at` is an element). */
+  menu: (at: { clientX: number; clientY: number } | HTMLElement, items: MenuItem[]) => void;
 }
 
 const UiContext = createContext<Ui>(null!);
@@ -33,6 +48,14 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [current, setCurrent] = useState<{ spec: DialogSpec; resolve: (r: DialogResult) => void } | null>(null);
   const queue = useRef<{ spec: DialogSpec; resolve: (r: DialogResult) => void }[]>([]);
+  const [menuState, setMenuState] = useState<MenuState | null>(null);
+
+  const menu = useCallback((at: { clientX: number; clientY: number } | HTMLElement, items: MenuItem[]) => {
+    if (at instanceof HTMLElement) {
+      const r = at.getBoundingClientRect();
+      setMenuState({ x: r.left, y: r.bottom + 2, items });
+    } else setMenuState({ x: at.clientX, y: at.clientY, items });
+  }, []);
 
   const toast = useCallback((text: string, kind: Toast["kind"] = "info") => {
     const id = Date.now() + Math.random();
@@ -76,8 +99,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <UiContext.Provider value={{ toast, dialog, confirm, prompt }}>
+    <UiContext.Provider value={{ toast, dialog, confirm, prompt, menu }}>
       {children}
+      {menuState && <MenuView state={menuState} onClose={() => setMenuState(null)} />}
       {current && <DialogView key={current.spec.title + Math.random()} spec={current.spec} onClose={close} />}
       <div className="toasts">
         {toasts.map((t) => (
@@ -140,6 +164,88 @@ function DialogView({ spec, onClose }: { spec: DialogSpec; onClose: (r: DialogRe
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function MenuView({ state, onClose }: { state: MenuState; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x: state.x, y: state.y, ready: false });
+
+  // Keep the menu inside the window.
+  useEffect(() => {
+    const el = ref.current!;
+    const { width, height } = el.getBoundingClientRect();
+    const x = Math.max(4, Math.min(state.x, window.innerWidth - width - 4));
+    const y = state.y + height > window.innerHeight - 4 ? Math.max(4, state.y - height) : state.y;
+    setPos({ x, y, ready: true });
+    el.focus();
+  }, [state]);
+
+  useEffect(() => {
+    const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("mousedown", down, true);
+    window.addEventListener("keydown", key, true);
+    window.addEventListener("blur", onClose);
+    window.addEventListener("resize", onClose);
+    return () => {
+      window.removeEventListener("mousedown", down, true);
+      window.removeEventListener("keydown", key, true);
+      window.removeEventListener("blur", onClose);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  // Arrow-key navigation between enabled items.
+  const onKey = (e: React.KeyboardEvent) => {
+    const buttons = [...ref.current!.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const n = e.key === "ArrowDown" ? (i + 1) % buttons.length : (i - 1 + buttons.length) % buttons.length;
+      buttons[n]?.focus();
+    }
+  };
+
+  return (
+    <div
+      ref={ref}
+      className="ctx-menu"
+      tabIndex={-1}
+      style={{ left: pos.x, top: pos.y, visibility: pos.ready ? "visible" : "hidden" }}
+      onKeyDown={onKey}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {state.items.map((it, i) =>
+        it === "-" ? (
+          <div key={i} className="ctx-sep" />
+        ) : "header" in it ? (
+          <div key={i} className="ctx-header">
+            {it.header}
+          </div>
+        ) : (
+          <button
+            key={i}
+            className={`ctx-item ${it.danger ? "danger" : ""}`}
+            disabled={it.disabled}
+            onClick={() => {
+              onClose();
+              it.onClick();
+            }}
+          >
+            <span className="ctx-icon">{it.icon}</span>
+            <span className="ctx-label">{it.label}</span>
+            {it.hint && <span className="ctx-hint">{it.hint}</span>}
+          </button>
+        ),
+      )}
     </div>
   );
 }

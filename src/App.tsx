@@ -1,39 +1,57 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { api, errorText, Server } from "./lib/api";
 import { clearHover, dropAt, hoverAt } from "./lib/dnd";
 import { TransfersPanel, TransfersProvider, useTransfers } from "./lib/transfers";
-import { UiProvider, useUi } from "./lib/ui";
+import { MenuItem, UiProvider, useUi } from "./lib/ui";
 import { ServerDialog } from "./components/ServerDialog";
-import { SessionStatus, SessionView } from "./components/SessionView";
-import { groupServers, Sidebar } from "./components/Sidebar";
-import { IClose, IKey, ILock, IPlus, ITransfer } from "./components/Icons";
+import { SessionStatus } from "./components/SessionView";
+import { groupServers, MAX_SIDEBAR, MIN_SIDEBAR, ServerState, Sidebar } from "./components/Sidebar";
+import { ScriptsPanel, ScriptsProvider, useScripts } from "./components/Scripts";
+import { PaneHandlers, PaneState, SplitDir, Tab, TabView } from "./components/TabView";
+import { TitleBar, TitleTab, WindowEdges } from "./components/TitleBar";
+import { IClose, ICopy, IHome, IKey, ILock, IPlay, IPlus, IScript, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
 
-interface Tab {
-  id: string;
-  serverId: string;
-  title: string;
-  status: SessionStatus;
-}
+const MAX_PANES = 4;
 
 export default function App() {
   return (
     <UiProvider>
       <TransfersProvider>
-        <Main />
+        <ScriptsProvider>
+          <Main />
+        </ScriptsProvider>
       </TransfersProvider>
     </UiProvider>
   );
 }
 
+const newPane = (serverId: string): PaneState => ({ id: crypto.randomUUID(), serverId, status: "connecting" });
+
+const STATUS_RANK: Record<ServerState["status"], number> = { connected: 4, connecting: 3, error: 2, closed: 1, idle: 0 };
+
+function readNumber(key: string, def: number) {
+  const v = Number(localStorage.getItem(key));
+  return Number.isFinite(v) && v > 0 ? v : def;
+}
+
 function Main() {
   const ui = useUi();
   const { transfers } = useTransfers();
+  const { scripts } = useScripts();
   const [servers, setServers] = useState<Server[]>([]);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [editing, setEditing] = useState<Server | null | undefined>(undefined); // undefined = closed
   const [showTransfers, setShowTransfers] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("td.sidebar") !== "0");
+  const [sidebarWidth, setSidebarWidth] = useState(() => Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, readNumber("td.sidebarWidth", 270))));
+  const [scriptsOpen, setScriptsOpen] = useState(() => localStorage.getItem("td.scriptsPanel") === "1");
+
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   useEffect(() => {
     api.listServers().then(setServers).catch((e) => ui.toast(errorText(e), "error"));
@@ -55,48 +73,152 @@ function Main() {
     };
   }, []);
 
-  const openSession = useCallback(
-    (s: Server, forceNew = false) => {
-      const existing = tabs.filter((t) => t.serverId === s.id);
-      if (existing.length && !forceNew) return setActive(existing[existing.length - 1].id);
-      const id = crypto.randomUUID();
-      const title = existing.length ? `${s.name} (${existing.length + 1})` : s.name;
-      setTabs((t) => [...t, { id, serverId: s.id, title, status: "connecting" }]);
-      setActive(id);
-    },
-    [tabs],
-  );
+  // ---------- tabs & panes ----------
 
-  const closeTab = useCallback(
-    (id: string) => {
-      setTabs((list) => {
-        const i = list.findIndex((t) => t.id === id);
-        const next = list.filter((t) => t.id !== id);
-        if (active === id) setActive(next[Math.min(i, next.length - 1)]?.id ?? null);
-        return next;
-      });
-    },
-    [active],
-  );
+  const updateTab = useCallback((id: string, f: (t: Tab) => Tab) => setTabs((list) => list.map((t) => (t.id === id ? f(t) : t))), []);
 
-  const setStatus = useCallback((id: string, status: SessionStatus) => {
-    setTabs((list) => list.map((t) => (t.id === id ? { ...t, status } : t)));
+  const addTab = useCallback((serverId: string) => {
+    const pane = newPane(serverId);
+    const tab: Tab = { id: crypto.randomUUID(), panes: [pane], dir: "row", sizes: [1], focus: pane.id };
+    setTabs((t) => [...t, tab]);
+    setActive(tab.id);
   }, []);
 
-  const statusHandlers = useMemo(() => {
-    const m: Record<string, (s: SessionStatus) => void> = {};
-    for (const t of tabs) m[t.id] = (s) => setStatus(t.id, s);
-    return m;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabs.map((t) => t.id).join(","), setStatus]);
+  const openSession = useCallback(
+    (s: Server, forceNew = false) => {
+      const existing = tabsRef.current.filter((t) => t.panes.some((p) => p.serverId === s.id));
+      if (existing.length && !forceNew) {
+        const tab = existing[existing.length - 1];
+        setActive(tab.id);
+        const pane = tab.panes.find((p) => p.serverId === s.id)!;
+        updateTab(tab.id, (t) => ({ ...t, focus: pane.id }));
+        return;
+      }
+      addTab(s.id);
+    },
+    [addTab, updateTab],
+  );
+
+  const closeTab = useCallback((id: string) => {
+    const list = tabsRef.current;
+    const i = list.findIndex((t) => t.id === id);
+    const next = list.filter((t) => t.id !== id);
+    setTabs(next);
+    if (activeRef.current === id) setActive(next[Math.min(i, next.length - 1)]?.id ?? null);
+  }, []);
+
+  const closeOtherTabs = useCallback((id: string) => {
+    setTabs((l) => l.filter((t) => t.id === id));
+    setActive(id);
+  }, []);
+
+  /** Adds a pane next to the focused one. serverId defaults to the focused pane's server (= duplicate). */
+  const splitTab = useCallback(
+    (tabId: string, dir: SplitDir, serverId?: string) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (!tab) return;
+      if (tab.panes.length >= MAX_PANES) return ui.toast(`В одной вкладке — не больше ${MAX_PANES} панелей`, "error");
+      const fi = Math.max(0, tab.panes.findIndex((p) => p.id === tab.focus));
+      const pane = newPane(serverId ?? tab.panes[fi].serverId);
+      const panes = [...tab.panes];
+      panes.splice(fi + 1, 0, pane);
+      const sizes = [...tab.sizes];
+      // The focused pane gives half of its space to the new one.
+      const half = (sizes[fi] ?? 1) / 2;
+      sizes.splice(fi, 1, half, half);
+      updateTab(tabId, (t) => ({ ...t, panes, sizes, dir, focus: pane.id }));
+      setActive(tabId);
+    },
+    [ui, updateTab],
+  );
+
+  const closePane = useCallback(
+    (tabId: string, paneId: string) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (!tab) return;
+      if (tab.panes.length <= 1) return closeTab(tabId);
+      const i = tab.panes.findIndex((p) => p.id === paneId);
+      const panes = tab.panes.filter((p) => p.id !== paneId);
+      const sizes = [...tab.sizes];
+      const [freed] = sizes.splice(i, 1);
+      // Give the freed space to the neighbour that takes the closed pane's place.
+      const n = Math.min(i, sizes.length - 1);
+      sizes[n] += freed;
+      const focus = tab.focus === paneId ? panes[n].id : tab.focus;
+      updateTab(tabId, (t) => ({ ...t, panes, sizes, focus }));
+    },
+    [closeTab, updateTab],
+  );
+
+  const duplicateTab = useCallback(
+    (tabId: string) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      const pane = tab?.panes.find((p) => p.id === tab.focus) ?? tab?.panes[0];
+      if (pane) addTab(pane.serverId);
+    },
+    [addTab],
+  );
+
+  const focusPane = useCallback(
+    (tabId: string, paneId: string) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (tab && tab.focus !== paneId) updateTab(tabId, (t) => ({ ...t, focus: paneId }));
+    },
+    [updateTab],
+  );
+
+  const setPaneStatus = useCallback((paneId: string, status: SessionStatus) => {
+    setTabs((list) =>
+      list.map((t) => (t.panes.some((p) => p.id === paneId) ? { ...t, panes: t.panes.map((p) => (p.id === paneId ? { ...p, status } : p)) } : t)),
+    );
+  }, []);
+
+  // Stable per-pane callbacks (SessionView must not re-render / reconnect because of them).
+  const handlerCache = useRef(new Map<string, PaneHandlers>());
+  const actions = useRef({ focusPane, setPaneStatus, splitTab, closePane });
+  actions.current = { focusPane, setPaneStatus, splitTab, closePane };
+  const handlers = useCallback((tabId: string, paneId: string) => {
+    let h = handlerCache.current.get(paneId);
+    if (!h) {
+      h = {
+        onFocus: () => actions.current.focusPane(tabId, paneId),
+        onStatus: (s) => actions.current.setPaneStatus(paneId, s),
+        onSplit: (dir) => {
+          actions.current.focusPane(tabId, paneId);
+          actions.current.splitTab(tabId, dir);
+        },
+        onClose: () => actions.current.closePane(tabId, paneId),
+      };
+      handlerCache.current.set(paneId, h);
+    }
+    return h;
+  }, []);
+  useEffect(() => {
+    const live = new Set(tabs.flatMap((t) => t.panes.map((p) => p.id)));
+    for (const id of handlerCache.current.keys()) if (!live.has(id)) handlerCache.current.delete(id);
+  }, [tabs]);
+
+  const activeTab = tabs.find((t) => t.id === active) ?? null;
+  const focusedPane = activeTab?.panes.find((p) => p.id === activeTab.focus) ?? null;
+  const focusedServer = servers.find((s) => s.id === focusedPane?.serverId) ?? null;
+
+  // ---------- servers ----------
 
   const deleteServer = async (s: Server) => {
     if (!(await ui.confirm("Удалить сервер?", `«${s.name}» будет удалён из списка вместе с сохранённым паролем.`, true))) return;
     try {
       await api.deleteServer(s.id);
       setServers((l) => l.filter((x) => x.id !== s.id));
-      setTabs((l) => l.filter((t) => t.serverId !== s.id));
-      setActive((a) => (tabs.some((t) => t.id === a && t.serverId === s.id) ? null : a));
+      const next = tabsRef.current
+        .map((t) => {
+          const keep = t.panes.map((p, i) => [p, t.sizes[i]] as const).filter(([p]) => p.serverId !== s.id);
+          if (keep.length === t.panes.length) return t;
+          const panes = keep.map(([p]) => p);
+          return { ...t, panes, sizes: keep.map(([, z]) => z), focus: panes.some((p) => p.id === t.focus) ? t.focus : panes[0]?.id };
+        })
+        .filter((t) => t.panes.length > 0);
+      setTabs(next);
+      if (!next.some((t) => t.id === activeRef.current)) setActive(next[next.length - 1]?.id ?? null);
     } catch (e) {
       ui.toast(errorText(e), "error");
     }
@@ -108,23 +230,60 @@ function Main() {
     if (connect) openSession(s, true);
   };
 
-  // Global shortcuts.
+  // ---------- tool windows ----------
+
+  const toggleSidebar = useCallback((open?: boolean) => {
+    setSidebarOpen((v) => {
+      const next = open ?? !v;
+      localStorage.setItem("td.sidebar", next ? "1" : "0");
+      return next;
+    });
+  }, []);
+
+  const toggleScripts = useCallback(() => {
+    setScriptsOpen((v) => {
+      localStorage.setItem("td.scriptsPanel", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+
+  const resizeSidebar = useCallback((w: number) => {
+    setSidebarWidth(w);
+    localStorage.setItem("td.sidebarWidth", String(Math.round(w)));
+  }, []);
+
+  // ---------- global shortcuts ----------
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector(".modal-backdrop")) return;
       const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
+      const tab = tabsRef.current.find((t) => t.id === activeRef.current);
+      const list = tabsRef.current;
       let handled = true;
-      if (e.code === "KeyK" && e.shiftKey) document.getElementById("server-search")?.focus();
-      else if (e.code === "KeyN" && e.shiftKey) setEditing(null);
-      else if (e.code === "KeyW" && e.shiftKey && active) closeTab(active);
-      else if (e.key === "Tab" && tabs.length) {
-        const i = tabs.findIndex((t) => t.id === active);
-        const n = (i + (e.shiftKey ? -1 : 1) + tabs.length) % tabs.length;
-        setActive(tabs[n].id);
-      } else if (e.altKey && /^Digit[1-9]$/.test(e.code)) {
-        const t = tabs[Number(e.code.slice(5)) - 1];
+      if (mod && e.shiftKey && e.code === "KeyK") {
+        toggleSidebar(true);
+        requestAnimationFrame(() => document.getElementById("server-search")?.focus());
+      } else if (mod && e.shiftKey && e.code === "KeyN") setEditing(null);
+      else if (mod && e.shiftKey && e.code === "KeyW" && tab) closePane(tab.id, tab.focus);
+      else if (mod && e.shiftKey && e.code === "KeyD" && tab) duplicateTab(tab.id);
+      else if (mod && e.key === "Tab" && list.length) {
+        const i = list.findIndex((t) => t.id === activeRef.current);
+        const n = (i + (e.shiftKey ? -1 : 1) + list.length) % list.length;
+        setActive(list[n].id);
+      } else if (mod && e.altKey && /^Digit[1-9]$/.test(e.code)) {
+        const t = list[Number(e.code.slice(5)) - 1];
         if (t) setActive(t.id);
-      } else handled = false;
+      } else if (e.altKey && e.shiftKey && !mod && (e.code === "Equal" || e.code === "NumpadAdd") && tab) splitTab(tab.id, "row");
+      else if (e.altKey && e.shiftKey && !mod && (e.code === "Minus" || e.code === "NumpadSubtract") && tab) splitTab(tab.id, "column");
+      else if (e.altKey && !e.shiftKey && !mod && e.key.startsWith("Arrow") && tab && tab.panes.length > 1) {
+        const i = tab.panes.findIndex((p) => p.id === tab.focus);
+        const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
+        const n = (i + (back ? -1 : 1) + tab.panes.length) % tab.panes.length;
+        focusPane(tab.id, tab.panes[n].id);
+      } else if (e.altKey && !e.shiftKey && !mod && e.code === "Digit1") toggleSidebar();
+      else if (e.altKey && !e.shiftKey && !mod && e.code === "Digit2") toggleScripts();
+      else handled = false;
       if (handled) {
         // Keep the shortcut away from the terminal.
         e.preventDefault();
@@ -133,73 +292,144 @@ function Main() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [tabs, active, closeTab]);
+  }, [closePane, duplicateTab, splitTab, focusPane, toggleSidebar, toggleScripts]);
 
-  const openCounts = useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const t of tabs) m[t.serverId] = (m[t.serverId] ?? 0) + 1;
+  // ---------- derived ----------
+
+  const serverStates = useMemo(() => {
+    const m: Record<string, ServerState> = {};
+    for (const t of tabs)
+      for (const p of t.panes) {
+        const st = (m[p.serverId] ??= { status: "idle", connected: 0, open: 0 });
+        st.open++;
+        if (p.status === "connected") st.connected++;
+        if (STATUS_RANK[p.status] > STATUS_RANK[st.status]) st.status = p.status;
+      }
     return m;
   }, [tabs]);
+
+  const titleTabs = useMemo<TitleTab[]>(() => {
+    const seen = new Map<string, number>();
+    return tabs.map((t) => {
+      const names = [...new Set(t.panes.map((p) => servers.find((s) => s.id === p.serverId)?.name ?? "?"))];
+      let title = names.join(" | ");
+      if (t.panes.length > 1 && names.length === 1) title += ` ×${t.panes.length}`;
+      const n = (seen.get(title) ?? 0) + 1;
+      seen.set(title, n);
+      const focus = t.panes.find((p) => p.id === t.focus) ?? t.panes[0];
+      return {
+        id: t.id,
+        title: n > 1 ? `${title} (${n})` : title,
+        status: focus.status,
+        color: servers.find((s) => s.id === focus.serverId)?.color,
+        panes: t.panes.length,
+      };
+    });
+  }, [tabs, servers]);
 
   const groups = useMemo(() => [...new Set(servers.map((s) => s.group?.trim()).filter((g): g is string => !!g))], [servers]);
   const running = transfers.filter((t) => t.progress.status === "running").length;
 
+  const tabMenu = (e: React.MouseEvent, id: string) => {
+    setActive(id);
+    ui.menu(e, [
+      { label: "Дублировать в новой вкладке", icon: <ICopy size={13} />, hint: "Ctrl+Shift+D", onClick: () => duplicateTab(id) },
+      { label: "Разделить вправо", icon: <ISplitRight size={13} />, hint: "Alt+Shift+=", onClick: () => splitTab(id, "row") },
+      { label: "Разделить вниз", icon: <ISplitDown size={13} />, hint: "Alt+Shift+-", onClick: () => splitTab(id, "column") },
+      "-",
+      { label: "Закрыть вкладку", icon: <IClose size={13} />, onClick: () => closeTab(id) },
+      { label: "Закрыть другие вкладки", disabled: tabs.length < 2, onClick: () => closeOtherTabs(id) },
+    ]);
+  };
+
+  const newTabMenu = (e: React.MouseEvent<HTMLElement>) => {
+    const items: MenuItem[] = [];
+    for (const [group, list] of groupServers(servers, "")) {
+      if (group) items.push({ header: group });
+      for (const s of list) items.push({ label: s.name, icon: <IPlay size={13} />, hint: s.host, onClick: () => openSession(s, true) });
+    }
+    if (items.length) items.push("-");
+    items.push({ label: "Добавить сервер…", icon: <IPlus size={13} />, hint: "Ctrl+Shift+N", onClick: () => setEditing(null) });
+    ui.menu(e.currentTarget, items);
+  };
+
   return (
     <div className="app">
-      <Sidebar
-        servers={servers}
-        openCounts={openCounts}
-        onConnect={openSession}
-        onAdd={() => setEditing(null)}
-        onEdit={(s) => setEditing(s)}
-        onDelete={deleteServer}
-        onHome={() => setActive(null)}
-        homeActive={active === null}
+      <TitleBar
+        tabs={titleTabs}
+        active={active}
+        onSelect={setActive}
+        onClose={closeTab}
+        onTabMenu={tabMenu}
+        onNewTab={newTabMenu}
+        left={
+          <>
+            <button className={`tb-brand ${active === null ? "on" : ""}`} onClick={() => setActive(null)} title="Главная">
+              <img src="/logo.svg" alt="" />
+              <span>TermDock</span>
+            </button>
+            <button className={`icon-btn tb-tool ${sidebarOpen ? "on" : ""}`} onClick={() => toggleSidebar()} title="Панель серверов (Alt+1)">
+              <ISidebar size={15} />
+            </button>
+            <button className={`icon-btn tb-tool ${active === null ? "on" : ""}`} onClick={() => setActive(null)} title="Все серверы">
+              <IHome size={15} />
+            </button>
+          </>
+        }
+        right={
+          <>
+            <button className={`tb-btn ${scriptsOpen ? "on" : ""}`} onClick={toggleScripts} title="Скрипты (Alt+2)">
+              <IScript size={14} /> Скрипты{scripts.length ? <span className="muted">{scripts.length}</span> : null}
+            </button>
+            <button className={`tb-btn ${showTransfers ? "on" : ""}`} onClick={() => setShowTransfers(!showTransfers)} title="Передачи файлов">
+              <ITransfer size={14} /> Передачи{running ? <span className="badge">{running}</span> : null}
+            </button>
+          </>
+        }
       />
-      <main className="main">
-        <div className="tabbar">
+      <div className="workspace">
+        {sidebarOpen && (
+          <Sidebar
+            servers={servers}
+            states={serverStates}
+            width={sidebarWidth}
+            onResize={resizeSidebar}
+            onConnect={openSession}
+            onSplitOpen={activeTab ? (s, dir) => splitTab(activeTab.id, dir, s.id) : null}
+            onAdd={() => setEditing(null)}
+            onEdit={(s) => setEditing(s)}
+            onDelete={deleteServer}
+          />
+        )}
+        <main className="content">
+          {active === null && <Home servers={servers} states={serverStates} onConnect={openSession} onAdd={() => setEditing(null)} />}
           {tabs.map((t) => (
-            <div
+            <TabView
               key={t.id}
-              className={`tab ${t.id === active ? "active" : ""}`}
-              onClick={() => setActive(t.id)}
-              onAuxClick={(e) => e.button === 1 && closeTab(t.id)}
-              title={t.title}
-            >
-              <span className={`status-dot ${t.status}`} />
-              <span className="tab-title">{t.title}</span>
-              <button
-                className="tab-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeTab(t.id);
-                }}
-                title="Закрыть (Ctrl+Shift+W)"
-              >
-                <IClose size={12} />
-              </button>
-            </div>
+              tab={t}
+              servers={servers}
+              visible={t.id === active}
+              handlers={(paneId) => handlers(t.id, paneId)}
+              onSizes={(sizes) => updateTab(t.id, (x) => ({ ...x, sizes }))}
+            />
           ))}
-          <div className="spacer" />
-          <button className={`btn btn-sm transfers-btn ${showTransfers ? "on" : ""}`} onClick={() => setShowTransfers(!showTransfers)} title="Передачи файлов">
-            <ITransfer /> Передачи{running ? <span className="badge">{running}</span> : null}
-          </button>
-        </div>
-        <div className="content">
-          {active === null && <Home servers={servers} onConnect={openSession} onAdd={() => setEditing(null)} />}
-          {tabs.map((t) => {
-            const server = servers.find((s) => s.id === t.serverId);
-            return server ? <SessionView key={t.id} tabId={t.id} server={server} active={t.id === active} onStatus={statusHandlers[t.id]} /> : null;
-          })}
           {showTransfers && <TransfersPanel onClose={() => setShowTransfers(false)} />}
-        </div>
-      </main>
+        </main>
+        {scriptsOpen && (
+          <ScriptsPanel
+            paneId={focusedPane?.status === "connected" ? focusedPane.id : null}
+            target={focusedServer && focusedPane?.status === "connected" ? focusedServer.name : null}
+            onClose={toggleScripts}
+          />
+        )}
+      </div>
       {editing !== undefined && <ServerDialog server={editing} groups={groups} onClose={() => setEditing(undefined)} onSaved={onSaved} />}
+      <WindowEdges />
     </div>
   );
 }
 
-function Home({ servers, onConnect, onAdd }: { servers: Server[]; onConnect: (s: Server) => void; onAdd: () => void }) {
+function Home({ servers, states, onConnect, onAdd }: { servers: Server[]; states: Record<string, ServerState>; onConnect: (s: Server) => void; onAdd: () => void }) {
   const grouped = groupServers(servers, "");
   return (
     <div className="home">
@@ -227,17 +457,33 @@ function Home({ servers, onConnect, onAdd }: { servers: Server[]; onConnect: (s:
             <section key={group || "_"}>
               {grouped.length > 1 && <h4 className="home-group">{group || "Без группы"}</h4>}
               <div className="cards">
-                {list.map((s) => (
-                  <button key={s.id} className="card" onClick={() => onConnect(s)}>
-                    <span className="card-stripe" style={{ background: s.color || "#58a6ff" }} />
-                    <div className="card-name">{s.name}</div>
-                    <div className="card-host">
-                      {s.username}@{s.host}
-                      {s.port !== 22 ? `:${s.port}` : ""}
-                    </div>
-                    <div className="card-meta">{s.auth === "key" ? <><IKey size={12} /> ключ</> : <><ILock size={12} /> {s.hasSecret ? "пароль сохранён" : "пароль"}</>}</div>
-                  </button>
-                ))}
+                {list.map((s) => {
+                  const st = states[s.id];
+                  return (
+                    <button key={s.id} className="card" onClick={() => onConnect(s)}>
+                      <span className="card-stripe" style={{ background: s.color || "#58a6ff" }} />
+                      <div className="card-name">
+                        {st && <span className={`status-dot ${st.status}`} />}
+                        {s.name}
+                      </div>
+                      <div className="card-host">
+                        {s.username}@{s.host}
+                        {s.port !== 22 ? `:${s.port}` : ""}
+                      </div>
+                      <div className="card-meta">
+                        {s.auth === "key" ? (
+                          <>
+                            <IKey size={12} /> ключ
+                          </>
+                        ) : (
+                          <>
+                            <ILock size={12} /> {s.hasSecret ? "пароль сохранён" : "пароль"}
+                          </>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </section>
           ))
@@ -245,9 +491,13 @@ function Home({ servers, onConnect, onAdd }: { servers: Server[]; onConnect: (s:
         <div className="shortcuts">
           <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> поиск</span>
           <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> новый сервер</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> дублировать вкладку</span>
+          <span><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>=</kbd> / <kbd>-</kbd> разделить вправо / вниз</span>
+          <span><kbd>Alt</kbd>+<kbd>←→</kbd> переход между панелями</span>
+          <span><kbd>Alt</kbd>+<kbd>1</kbd> / <kbd>2</kbd> серверы / скрипты</span>
           <span><kbd>Ctrl</kbd>+<kbd>Tab</kbd> след. вкладка</span>
           <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C/V</kbd> копировать/вставить</span>
-          <span>Перетащите файлы из проводника в терминал или панель сервера — они загрузятся</span>
+          <span>ПКМ по файлу, вкладке или серверу — меню действий</span>
         </div>
       </div>
     </div>

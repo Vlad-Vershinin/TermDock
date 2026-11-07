@@ -7,24 +7,36 @@ import { openUrl } from "../lib/open";
 import "@xterm/xterm/css/xterm.css";
 import { api, errorText, Server } from "../lib/api";
 import { DropDetail } from "../lib/dnd";
+import { paneRegistry } from "../lib/sessions";
 import { useTransfers } from "../lib/transfers";
 import { useUi } from "../lib/ui";
 import { FilePanel } from "./FilePanel";
-import { IFolder } from "./Icons";
+import { IClose, IFolder, IRefresh, IScript, ISplitDown, ISplitRight } from "./Icons";
+import { useScriptMenu } from "./Scripts";
+import { Telemetry } from "./Telemetry";
 
 export type SessionStatus = "connecting" | "connected" | "closed" | "error";
 
 interface Props {
-  tabId: string;
+  paneId: string;
   server: Server;
-  active: boolean;
+  /** The tab holding this pane is shown. */
+  visible: boolean;
+  /** This pane has keyboard focus within its tab. */
+  focused: boolean;
+  /** The tab is split into several panes. */
+  split: boolean;
+  onFocus: () => void;
   onStatus: (s: SessionStatus) => void;
+  onSplit: (dir: "row" | "column") => void;
+  onClose: () => void;
 }
 
 const FONT = '"JetBrains Mono", "Cascadia Mono", "Fira Code", Consolas, "DejaVu Sans Mono", "Ubuntu Mono", monospace';
 
-export function SessionView({ tabId, server, active, onStatus }: Props) {
+export function SessionView({ paneId, server, visible, focused, split: inSplit, onFocus, onStatus, onSplit, onClose }: Props) {
   const ui = useUi();
+  const scriptMenu = useScriptMenu();
   const transfers = useTransfers();
   const termEl = useRef<HTMLDivElement>(null);
   const termZone = useRef<HTMLDivElement>(null);
@@ -39,6 +51,7 @@ export function SessionView({ tabId, server, active, onStatus }: Props) {
   const remoteDir = useRef<string | null>(null);
   const [remoteDirState, setRemoteDirState] = useState<string | null>(null);
   const body = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const updateStatus = useCallback(
     (s: SessionStatus) => {
@@ -153,10 +166,10 @@ export function SessionView({ tabId, server, active, onStatus }: Props) {
       allowProposedApi: true,
       scrollback: 10000,
       theme: {
-        background: "#0d1117",
+        background: "#1e1f22",
         foreground: "#d6deeb",
         cursor: "#58a6ff",
-        selectionBackground: "#264f78",
+        selectionBackground: "#214283",
         black: "#484f58",
         red: "#ff7b72",
         green: "#3fb950",
@@ -255,13 +268,28 @@ export function SessionView({ tabId, server, active, onStatus }: Props) {
   statusRef.current = status;
 
   useEffect(() => {
-    if (active) {
-      requestAnimationFrame(() => {
-        fit.current?.fit();
-        term.current?.focus();
-      });
-    }
-  }, [active, showFiles, split]);
+    if (!visible) return;
+    requestAnimationFrame(() => {
+      fit.current?.fit();
+      // Don't steal focus from the file panel / bar of this pane when it was clicked.
+      if (focused && !rootRef.current?.contains(document.activeElement)) term.current?.focus();
+    });
+  }, [visible, focused, showFiles, split]);
+
+  // Let app-level features (scripts) type into this terminal.
+  useEffect(() => {
+    const enc = new TextEncoder();
+    paneRegistry.set(paneId, {
+      serverId: server.id,
+      send: (text) => {
+        if (!sessionRef.current) return false;
+        api.write(sessionRef.current, enc.encode(text)).catch(() => {});
+        return true;
+      },
+      focus: () => term.current?.focus(),
+    });
+    return () => paneRegistry.delete(paneId);
+  }, [paneId, server.id]);
 
   // ---- drop onto terminal = upload to the current remote folder ----
   const dropRef = useRef<(d: DropDetail) => void>(() => {});
@@ -308,8 +336,14 @@ export function SessionView({ tabId, server, active, onStatus }: Props) {
     setRemoteDirState(d);
   }, []);
 
+  const cdTo = useCallback((dir: string) => {
+    if (!sessionRef.current) return;
+    api.write(sessionRef.current, new TextEncoder().encode(`cd '${dir.replace(/'/g, "'\\''")}'\r`)).catch(() => {});
+    term.current?.focus();
+  }, []);
+
   return (
-    <div className="session" style={{ display: active ? "flex" : "none" }}>
+    <div ref={rootRef} className={`session ${inSplit && focused ? "focused" : ""}`} onMouseDownCapture={onFocus} onFocusCapture={onFocus}>
       <div className="session-bar">
         <span className={`status-dot ${status}`} />
         <span className="session-target">
@@ -320,26 +354,38 @@ export function SessionView({ tabId, server, active, onStatus }: Props) {
           {{ connecting: "подключение…", connected: "подключено", closed: "отключено", error: "ошибка" }[status]}
         </span>
         <div className="spacer" />
+        {status === "connected" && <Telemetry sessionId={sessionId} visible={visible} />}
         {status === "connected" && showFiles && remoteDirState && (
-          <button
-            className="btn btn-sm"
-            title="Перейти в терминале в папку, открытую в файловой панели"
-            onClick={() => sessionRef.current && api.write(sessionRef.current, new TextEncoder().encode(`cd '${remoteDir.current!.replace(/'/g, "'\\''")}'\r`))}
-          >
+          <button className="btn btn-sm" title="Перейти в терминале в папку, открытую в файловой панели" onClick={() => cdTo(remoteDir.current!)}>
             cd сюда
           </button>
         )}
         {(status === "closed" || status === "error") && (
-          <button className="btn btn-sm btn-primary" onClick={() => connect()}>
-            Переподключиться
+          <button className="btn btn-sm btn-primary" onClick={() => connect()} title="Переподключиться">
+            <IRefresh size={13} /> <span className="btn-label">Переподключиться</span>
           </button>
         )}
-        <button className={`btn btn-sm ${showFiles ? "on" : ""}`} onClick={toggleFiles} title="Показать/скрыть файлы">
-          <IFolder /> Файлы
+        <button className="btn btn-sm" disabled={status !== "connected"} onClick={(e) => ui.menu(e.currentTarget, scriptMenu(paneId))} title="Выполнить сохранённый скрипт">
+          <IScript /> <span className="btn-label">Скрипты</span>
         </button>
+        <button className={`btn btn-sm ${showFiles ? "on" : ""}`} onClick={toggleFiles} title="Показать/скрыть файлы">
+          <IFolder /> <span className="btn-label">Файлы</span>
+        </button>
+        <span className="bar-sep" />
+        <button className="icon-btn" onClick={() => onSplit("row")} title="Разделить вправо — ещё одно подключение (Alt+Shift+=)">
+          <ISplitRight size={14} />
+        </button>
+        <button className="icon-btn" onClick={() => onSplit("column")} title="Разделить вниз — ещё одно подключение (Alt+Shift+-)">
+          <ISplitDown size={14} />
+        </button>
+        {inSplit && (
+          <button className="icon-btn" onClick={onClose} title="Закрыть панель (Ctrl+Shift+W)">
+            <IClose size={14} />
+          </button>
+        )}
       </div>
       <div className="session-body" ref={body}>
-        <div className="term-zone" ref={termZone} data-dropzone={`${tabId}:term`} data-accept="os,local" style={{ flex: showFiles ? `0 0 ${split * 100}%` : "1 1 auto" }}>
+        <div className="term-zone" ref={termZone} data-dropzone={`${paneId}:term`} data-accept="os,local" style={{ flex: showFiles ? `0 0 ${split * 100}%` : "1 1 auto" }}>
           <div className="term" ref={termEl} />
           <div className="drop-overlay">Отпустите, чтобы загрузить в текущую папку сервера</div>
         </div>
@@ -347,7 +393,7 @@ export function SessionView({ tabId, server, active, onStatus }: Props) {
           <>
             <div className="splitter" onPointerDown={startResize} />
             <div className="files-zone">
-              <FilePanel tabId={tabId} server={server} sessionId={sessionId} onRemoteDir={onRemoteDir} />
+              <FilePanel tabId={paneId} server={server} sessionId={sessionId} onRemoteDir={onRemoteDir} onCd={cdTo} />
             </div>
           </>
         )}

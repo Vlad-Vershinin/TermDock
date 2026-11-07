@@ -80,3 +80,52 @@ export const ITransfer = svg(<path d="M7 4v16M3 8l4-4 4 4M17 20V4M21 16l-4 4-4-4
 export const IUpload = svg(<path d="M12 16V4M7 9l5-5 5 5M4 20h16" />);
 export const IDownload = svg(<path d="M12 4v12M7 11l5 5 5-5M4 20h16" />);
 export const ITerminal = svg(<path d="M4 17l6-5-6-5M12 19h8" />);
+export const IPlay = svg(<path d="M7 4l13 8-13 8z" fill="currentColor" fillOpacity=".2" />);
+export const IScript = svg(
+  <>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5M9 13l2 2-2 2M13 17h3" />
+  </>,
+);
+export const IFilePlus = svg(
+  <>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5M12 11v6M9 14h6" />
+  </>,
+);
+export const ISplitRight = svg(
+  <>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M12 4v16" />
+  </>,
+);
+export const ISplitDown = svg(
+  <>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M3 12h18" />
+  </>,
+);
+export const ISidebar = svg(
+  <>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M9 4v16" />
+  </>,
+);
+export const IActivity = svg(<path d="M3 12h4l3-8 4 16 3-8h4" />);
+export const IChevronDown = svg(<path d="M6 9l6 6 6-6" />);
+export const IHome = svg(<path d="M3 11l9-7 9 7M5 9v11h14V9" />);
+export const ILink = svg(<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />);
+export const ISave = svg(<path d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM7 3v6h8V3M7 21v-7h10v7" />);
+// Window controls: thin strokes, drawn on a 10x10 grid like native captions.
+const cap = (d: string) =>
+  function Caption() {
+    return (
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth={1} aria-hidden>
+        <path d={d} />
+      </svg>
+    );
+  };
+export const ICapMin = cap("M0 5.5h10");
+export const ICapMax = cap("M.5.5h9v9h-9z");
+export const ICapRestore = cap("M.5 2.5h7v7h-7zM2.5 2.5V.5h7v7h-2");
+export const ICapClose = cap("M0 0l10 10M10 0L0 10");
