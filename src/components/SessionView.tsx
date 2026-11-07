@@ -15,6 +15,7 @@ import { IClose, IFolder, IPlay, IRefresh, IScript, ISplitDown, ISplitRight, ISt
 import { useScriptMenu, useScripts } from "./Scripts";
 import { commandBlock } from "../lib/scripts";
 import { Telemetry } from "./Telemetry";
+import { Ports } from "./Ports";
 
 export type SessionStatus = "connecting" | "connected" | "closed" | "error";
 
@@ -469,6 +470,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         </span>
         <div className="spacer" />
         {status === "connected" && <Telemetry sessionId={sessionId} visible={visible} />}
+        {status === "connected" && <Ports sessionId={sessionId} visible={visible} />}
         {status === "connected" && showFiles && remoteDirState && (
           <button className="btn btn-sm" title="Перейти в терминале в папку, открытую в файловой панели" onClick={() => cdTo(remoteDir.current!)}>
             cd сюда

@@ -43,6 +43,46 @@ pub fn jump_secret_id(server_id: &str) -> String {
     format!("{server_id}#jump")
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ForwardKind {
+    /// -L: a local port → an address reachable from the server.
+    #[default]
+    Local,
+    /// -R: a port on the server → an address reachable from this computer.
+    Remote,
+    /// -D: a local SOCKS5 proxy whose connections go out from the server.
+    Dynamic,
+}
+
+/// A port forward. For `Remote` the bind address is on the server and the destination is local.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Forward {
+    pub id: String,
+    pub kind: ForwardKind,
+    pub bind_host: String,
+    pub bind_port: u16,
+    /// Unused for `Dynamic`.
+    pub dest_host: String,
+    pub dest_port: u16,
+    pub enabled: bool,
+}
+
+impl Default for Forward {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: ForwardKind::Local,
+            bind_host: "127.0.0.1".into(),
+            bind_port: 0,
+            dest_host: String::new(),
+            dest_port: 0,
+            enabled: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Server {
@@ -71,6 +111,9 @@ pub struct Server {
     /// Saved script (id) to run right after connecting.
     #[serde(default)]
     pub connect_script: Option<String>,
+    /// Port forwards started with every connection.
+    #[serde(default)]
+    pub forwards: Vec<Forward>,
 }
 
 impl Server {

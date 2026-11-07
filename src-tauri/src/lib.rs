@@ -1,4 +1,5 @@
 mod files;
+mod forward;
 mod scripts;
 mod ssh;
 mod sshconfig;
@@ -305,7 +306,7 @@ async fn ssh_connect(
         }
         hop.accept_fingerprint = accept.get(&hop.id).cloned();
     }
-    let params = ConnectParams { hops, cols, rows, known_hosts: paths.known_hosts.clone() };
+    let params = ConnectParams { hops, cols, rows, known_hosts: paths.known_hosts.clone(), forwards: server.forwards.clone() };
     let id = ssh::connect(&sessions, params, events).await?;
     // Remember passwords typed in the prompt only after they actually worked.
     for hop_id in remember.unwrap_or_default() {
@@ -386,6 +387,24 @@ async fn ssh_disconnect(sessions: State<'_, Sessions>, session_id: String) -> Re
     if let Some(s) = sessions.remove(&session_id) {
         s.close().await;
     }
+    Ok(())
+}
+
+#[tauri::command]
+async fn ssh_forwards(sessions: State<'_, Sessions>, session_id: String) -> Result<Vec<forward::ForwardStatus>, String> {
+    Ok(sessions.get(&session_id)?.forwards().status().await)
+}
+
+/// Starts (or restarts) a forward in a live session; one with a new id is session-only.
+#[tauri::command]
+async fn ssh_forward_start(sessions: State<'_, Sessions>, session_id: String, forward: store::Forward) -> Result<forward::ForwardStatus, String> {
+    Ok(sessions.get(&session_id)?.forwards().start(forward).await)
+}
+
+/// Stops a forward; `remove` also drops it from the session's list.
+#[tauri::command]
+async fn ssh_forward_stop(sessions: State<'_, Sessions>, session_id: String, id: String, remove: Option<bool>) -> Result<(), String> {
+    sessions.get(&session_id)?.forwards().stop(&id, remove.unwrap_or(false)).await;
     Ok(())
 }
 
@@ -565,6 +584,9 @@ pub fn run() {
             ssh_write,
             ssh_resize,
             ssh_disconnect,
+            ssh_forwards,
+            ssh_forward_start,
+            ssh_forward_stop,
             remote_stats,
             local_home,
             local_list,
@@ -627,9 +649,9 @@ mod tests {
         let e = open_accepting(hops.clone()).await.err().unwrap();
         assert!(e.starts_with("JUMP|sshconfig:td-bastion|") && e.ends_with("|key|NEED_SECRET"), "{e}");
         hops[1].secret = Some(std::env::var("TD_SSH_ENC_PASS").unwrap());
-        let (jumps, h) = open_accepting(hops).await.unwrap();
-        assert_eq!(jumps.len(), 2);
-        assert_eq!(run(&h, "whoami").await.trim(), "tdtest");
+        let c = open_accepting(hops).await.unwrap();
+        assert_eq!(c.jumps.len(), 2);
+        assert_eq!(run(&c.handle, "whoami").await.trim(), "tdtest");
     }
 
     #[test]

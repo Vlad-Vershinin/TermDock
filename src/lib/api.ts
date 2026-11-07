@@ -19,6 +19,31 @@ export interface Server {
   jump?: Jump | null;
   /** Saved script (id) to run right after connecting. */
   connectScript?: string | null;
+  /** Port forwards started with every connection. */
+  forwards?: Forward[];
+}
+
+export type ForwardKind = "local" | "remote" | "dynamic";
+
+/** Port forward. For "remote" the bind address is on the server and the destination is local. */
+export interface Forward {
+  id: string;
+  kind: ForwardKind;
+  bindHost: string;
+  bindPort: number;
+  destHost: string;
+  destPort: number;
+  enabled: boolean;
+}
+
+export interface ForwardStatus extends Forward {
+  /** Added in the session only, not saved with the server. */
+  temporary: boolean;
+  /** "active" | "stopped" | "starting" | "error: …" */
+  status: string;
+  /** The port actually bound (when bindPort is 0). */
+  boundPort?: number | null;
+  connections: number;
 }
 
 /** Jump host: a saved server (`serverId`) or one described by the fields below. */
@@ -148,6 +173,11 @@ export const api = {
   write: (sessionId: string, data: Uint8Array) => invoke<void>("ssh_write", { sessionId, data: Array.from(data) }),
   resize: (sessionId: string, cols: number, rows: number) => invoke<void>("ssh_resize", { sessionId, cols, rows }),
   disconnect: (sessionId: string) => invoke<void>("ssh_disconnect", { sessionId }),
+
+  forwards: (sessionId: string) => invoke<ForwardStatus[]>("ssh_forwards", { sessionId }),
+  /** A forward with an unknown (or empty) id is added for this session only. */
+  forwardStart: (sessionId: string, forward: Forward) => invoke<ForwardStatus>("ssh_forward_start", { sessionId, forward }),
+  forwardStop: (sessionId: string, id: string, remove = false) => invoke<void>("ssh_forward_stop", { sessionId, id, remove }),
 
   stats: (sessionId: string) => invoke<Stats>("remote_stats", { sessionId }),
 

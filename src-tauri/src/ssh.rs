@@ -13,7 +13,8 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tokio::sync::mpsc;
 
-use crate::store::AuthMethod;
+use crate::forward::{Forwards, RemoteForwards};
+use crate::store::{AuthMethod, Forward};
 
 /// What happened with the server's host key during the handshake.
 #[derive(Default, Clone)]
@@ -30,6 +31,8 @@ pub struct Client {
     known_hosts: PathBuf,
     accept_fingerprint: Option<String>,
     verdict: Arc<Mutex<HostKeyVerdict>>,
+    /// Remote (-R) forwards requested on this connection.
+    remote: Arc<RemoteForwards>,
 }
 
 fn fingerprint(key: &PublicKey) -> String {
@@ -72,6 +75,20 @@ impl client::Handler for Client {
         };
         Ok(false)
     }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<Msg>,
+        _connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: client::ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        self.remote.open(channel, connected_port, reply);
+        Ok(())
+    }
 }
 
 /// Drops the app-local known_hosts entries for a host (used when the user accepts a changed key).
@@ -105,6 +122,7 @@ pub struct SshSession {
     jumps: Vec<Handle<Client>>,
     input: mpsc::UnboundedSender<Input>,
     sftp: tokio::sync::Mutex<Option<Arc<SftpSession>>>,
+    forwards: Arc<Forwards>,
     /// Previous /proc/stat sample (idle, total) for CPU usage deltas.
     cpu_prev: Mutex<Option<(u64, u64)>>,
 }
@@ -157,6 +175,8 @@ pub struct ConnectParams {
     pub cols: u32,
     pub rows: u32,
     pub known_hosts: PathBuf,
+    /// Started right after the shell opens.
+    pub forwards: Vec<Forward>,
 }
 
 async fn authenticate(handle: &mut Handle<Client>, hop: &Hop) -> Result<(), String> {
@@ -293,7 +313,13 @@ pub fn expand_tilde(p: &str) -> PathBuf {
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Opens one hop: directly, or through a direct-tcpip channel of the previous hop.
-async fn open_hop(config: Arc<client::Config>, known_hosts: &std::path::Path, hop: &Hop, via: Option<&Handle<Client>>) -> Result<Handle<Client>, String> {
+async fn open_hop(
+    config: Arc<client::Config>,
+    known_hosts: &std::path::Path,
+    hop: &Hop,
+    via: Option<&Handle<Client>>,
+    remote: Arc<RemoteForwards>,
+) -> Result<Handle<Client>, String> {
     let verdict = Arc::new(Mutex::new(HostKeyVerdict::None));
     let handler = Client {
         host: hop.host.clone(),
@@ -301,6 +327,7 @@ async fn open_hop(config: Arc<client::Config>, known_hosts: &std::path::Path, ho
         known_hosts: known_hosts.to_path_buf(),
         accept_fingerprint: hop.accept_fingerprint.clone(),
         verdict: verdict.clone(),
+        remote,
     };
     let res = match via {
         None => tokio::time::timeout(CONNECT_TIMEOUT, client::connect(config, (hop.host.as_str(), hop.port), handler)).await,
@@ -343,9 +370,18 @@ fn jump_error(hop: &Hop, e: String) -> String {
     }
 }
 
-/// Opens and authenticates every hop. Returns the jump host connections (outermost first)
-/// and the connection to the target server.
-pub async fn open_chain(hops: &[Hop], known_hosts: &std::path::Path) -> Result<(Vec<Handle<Client>>, Handle<Client>), String> {
+/// Authenticated connections of a hop chain.
+pub struct Chain {
+    /// Jump hosts, outermost first.
+    pub jumps: Vec<Handle<Client>>,
+    /// The target server.
+    pub handle: Handle<Client>,
+    /// Remote forwards of the target connection.
+    pub remote: Arc<RemoteForwards>,
+}
+
+/// Opens and authenticates every hop.
+pub async fn open_chain(hops: &[Hop], known_hosts: &std::path::Path) -> Result<Chain, String> {
     let config = Arc::new(client::Config {
         keepalive_interval: Some(Duration::from_secs(30)),
         keepalive_max: 4,
@@ -354,8 +390,11 @@ pub async fn open_chain(hops: &[Hop], known_hosts: &std::path::Path) -> Result<(
 
     let last = hops.len().checked_sub(1).ok_or("Не указан сервер")?;
     let mut chain: Vec<Handle<Client>> = Vec::with_capacity(hops.len());
+    let remote = Arc::new(RemoteForwards::default());
     for (i, hop) in hops.iter().enumerate() {
-        match open_hop(config.clone(), known_hosts, hop, chain.last()).await {
+        // Jump hosts get their own (always empty) table: they never get -R requests.
+        let table = if i == last { remote.clone() } else { Arc::default() };
+        match open_hop(config.clone(), known_hosts, hop, chain.last(), table).await {
             Ok(h) => chain.push(h),
             Err(e) => {
                 for h in chain.iter().rev() {
@@ -366,13 +405,13 @@ pub async fn open_chain(hops: &[Hop], known_hosts: &std::path::Path) -> Result<(
         }
     }
     let handle = chain.pop().unwrap();
-    Ok((chain, handle))
+    Ok(Chain { jumps: chain, handle, remote })
 }
 
 /// Connects (through the jump hosts, if any), authenticates and opens an interactive shell.
 /// Output is streamed to `events`.
 pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<TermEvent>) -> Result<String, String> {
-    let (jumps, handle) = open_chain(&p.hops, &p.known_hosts).await?;
+    let Chain { jumps, handle, remote } = open_chain(&p.hops, &p.known_hosts).await?;
 
     let channel = handle.channel_open_session().await.map_err(|e| e.to_string())?;
     channel
@@ -386,8 +425,14 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<Term
     tokio::spawn(write_loop(writer, rx));
 
     let id = uuid::Uuid::new_v4().to_string();
+    let handle = Arc::new(handle);
+    let forwards = Arc::new(Forwards::new(handle.clone(), remote));
+    // Forwards start in the background: a busy port must not delay or break the shell.
+    let fw = forwards.clone();
+    tokio::spawn(async move { fw.start_saved(p.forwards).await });
     let session = Arc::new(SshSession {
-        handle: Arc::new(handle),
+        handle,
+        forwards,
         jumps,
         input: tx,
         sftp: tokio::sync::Mutex::new(None),
@@ -494,7 +539,12 @@ impl SshSession {
         Ok(stats)
     }
 
+    pub fn forwards(&self) -> &Forwards {
+        &self.forwards
+    }
+
     pub async fn close(&self) {
+        self.forwards.stop_all().await;
         let _ = self.handle.disconnect(russh::Disconnect::ByApplication, "", "en").await;
         for h in self.jumps.iter().rev() {
             let _ = h.disconnect(russh::Disconnect::ByApplication, "", "en").await;

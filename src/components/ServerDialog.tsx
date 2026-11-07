@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, AuthMethod, configJumpText, errorText, Jump, Server, SshConfigInfo } from "../lib/api";
+import { api, AuthMethod, configJumpText, errorText, Forward, Jump, Server, SshConfigInfo } from "../lib/api";
 import { useUi } from "../lib/ui";
 import { useScripts } from "./Scripts";
+import { ForwardFields, forwardText, KIND_HINTS, newForward } from "./Ports";
+import { IClose, IPlus } from "./Icons";
 
 export const COLORS = ["#58a6ff", "#3fb950", "#d29922", "#ff7b72", "#bc8cff", "#39c5cf", "#f778ba", "#8b949e"];
 
@@ -65,6 +67,7 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
     };
   }, [s.host, s.port]);
   const setJ = <K extends keyof Jump>(k: K, v: Jump[K]) => setJump((x) => ({ ...x, [k]: v }));
+  const setForward = (i: number, f: Forward) => setS((x) => ({ ...x, forwards: (x.forwards ?? []).map((y, j) => (j === i ? f : y)) }));
 
   // A server can't go through itself, or through a server that already goes through it.
   const jumpCandidates = servers.filter((x) => !s.id || !goesThrough(x, s.id, servers));
@@ -95,6 +98,8 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
   const save = async (connect: boolean) => {
     if (jumpMode === "saved" && !jump.serverId) return ui.toast("Выберите сервер-посредник", "error");
     if (jumpMode === "custom" && !jump.host.trim()) return ui.toast("Укажите хост сервера-посредника", "error");
+    const badFw = (s.forwards ?? []).find((f) => (f.kind !== "remote" && !f.bindPort) || (f.kind !== "dynamic" && (!f.destHost.trim() || !f.destPort)));
+    if (badFw) return ui.toast(`Проброс портов: укажите порт и адрес назначения (${forwardText(badFw)})`, "error");
     setBusy(true);
     try {
       const p = parseHost(s);
@@ -279,6 +284,32 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
             </button>
             .
           </p>
+        </details>
+
+        <details open={!!server?.forwards?.length}>
+          <summary>
+            Проброс портов{s.forwards?.length ? ` — ${s.forwards.filter((f) => f.enabled).length} из ${s.forwards.length}` : ""}
+          </summary>
+          <p className="hint">
+            Запускается при каждом подключении и работает, пока сессия открыта. {KIND_HINTS.local} {KIND_HINTS.remote} {KIND_HINTS.dynamic}
+          </p>
+          {(s.forwards ?? []).map((f, i) => (
+            <div key={f.id} className="fw-edit">
+              <div className="fw-edit-head">
+                <label className="check small" title="Запускать при подключении">
+                  <input type="checkbox" checked={f.enabled} onChange={(e) => setForward(i, { ...f, enabled: e.target.checked })} />
+                  {forwardText(f)}
+                </label>
+                <button type="button" className="icon-btn" title="Удалить проброс" onClick={() => set("forwards", s.forwards!.filter((_, j) => j !== i))}>
+                  <IClose size={13} />
+                </button>
+              </div>
+              <ForwardFields f={f} onChange={(nf) => setForward(i, nf)} />
+            </div>
+          ))}
+          <button type="button" className="link-btn fw-add-btn" onClick={() => set("forwards", [...(s.forwards ?? []), newForward()])}>
+            <IPlus size={12} /> Добавить проброс
+          </button>
         </details>
 
         <details>
