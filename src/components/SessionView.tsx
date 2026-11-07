@@ -64,20 +64,24 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
   );
 
   // ---- connection ----
+  // Typed secrets, hops to remember and confirmed fingerprints are keyed by hop id
+  // (a server id, or jumpHopId(...) for a custom jump host).
   const connect = useCallback(
-    async (opts: { secret?: string; remember?: boolean; accept?: string } = {}) => {
+    async (opts: { secrets?: Record<string, string>; remember?: string[]; accept?: Record<string, string> } = {}) => {
       const t = term.current!;
       updateStatus("connecting");
-      t.write(`\r\n\x1b[90mПодключение к ${server.username}@${server.host}:${server.port}…\x1b[0m\r\n`);
+      const j = server.jump;
+      const via = j?.serverId ? " через сервер-посредник" : j?.host ? ` через ${j.username}@${j.host}${j.port && j.port !== 22 ? `:${j.port}` : ""}` : "";
+      t.write(`\r\n\x1b[90mПодключение к ${server.username}@${server.host}:${server.port}${via}…\x1b[0m\r\n`);
       try {
         fit.current?.fit();
         let id: string | null = null;
         let closedEarly = false;
         id = await api.connect({
           serverId: server.id,
-          secret: opts.secret,
+          secrets: opts.secrets,
           remember: opts.remember,
-          acceptFingerprint: opts.accept,
+          accept: opts.accept,
           cols: t.cols,
           rows: t.rows,
           onEvent: (e) => {
@@ -107,19 +111,30 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         t.focus();
       } catch (e) {
         if (disposed.current) return;
-        const msg = errorText(e);
-        if (msg === "NEED_SECRET" || (msg === "AUTH_FAILED" && server.auth === "password")) {
-          const isKey = server.auth === "key";
+        const raw = errorText(e);
+        // Errors from a jump host: JUMP|<hop id>|<user@host>|<auth>|<code>
+        const jm = raw.match(/^JUMP\|([^|]*)\|([^|]*)\|([^|]*)\|([\s\S]*)$/);
+        const hop = jm
+          ? { id: jm[1], label: jm[2], isKey: jm[3] === "key", jump: true, msg: jm[4] }
+          : { id: server.id, label: `${server.username}@${server.host}`, isKey: server.auth === "key", jump: false, msg: raw };
+        const host = hop.label.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
+        const what = hop.jump ? "сервера-посредника " : "";
+        const msg = hop.msg;
+        if (msg === "NEED_SECRET" || (msg === "AUTH_FAILED" && !hop.isKey)) {
           const r = await ui.dialog({
-            title: isKey ? "Пароль от ключа" : `Пароль для ${server.username}@${server.host}`,
+            title: hop.isKey ? `Пароль от ключа ${what}${hop.label}` : `Пароль ${what}${hop.label}`,
             message: msg === "AUTH_FAILED" ? <span className="err">Неверный пароль, попробуйте ещё раз.</span> : undefined,
             fields: [
-              { name: "secret", label: isKey ? "Passphrase" : "Пароль", type: "password" },
+              { name: "secret", label: hop.isKey ? "Passphrase" : "Пароль", type: "password" },
               { name: "remember", label: "Сохранить в системном хранилище паролей", type: "checkbox", value: true },
             ],
             okText: "Подключиться",
           });
-          if (r) return connect({ ...opts, secret: String(r.secret), remember: !!r.remember });
+          if (r) {
+            const remember = (opts.remember ?? []).filter((x) => x !== hop.id);
+            if (r.remember) remember.push(hop.id);
+            return connect({ ...opts, secrets: { ...opts.secrets, [hop.id]: String(r.secret) }, remember });
+          }
           t.write("\x1b[90mОтменено.\x1b[0m\r\n");
           return updateStatus("closed");
         }
@@ -127,17 +142,19 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
           const [kind, fp, alg] = msg.split("|");
           const changed = kind === "HOSTKEY_CHANGED";
           const ok = await ui.dialog({
-            title: changed ? "⚠ Ключ сервера изменился!" : "Новый сервер",
+            title: changed ? "⚠ Ключ сервера изменился!" : hop.jump ? "Новый сервер-посредник" : "Новый сервер",
             danger: changed,
             message: (
               <>
                 {changed ? (
                   <p className="err">
-                    Ключ сервера {server.host} не совпадает с сохранённым. Это может означать переустановку сервера — или атаку
-                    «человек посередине». Продолжайте, только если уверены.
+                    Ключ {hop.jump ? "сервера-посредника" : "сервера"} {host} не совпадает с сохранённым. Это может означать переустановку
+                    сервера — или атаку «человек посередине». Продолжайте, только если уверены.
                   </p>
                 ) : (
-                  <p>Подлинность сервера {server.host} ещё не подтверждена. Сверьте отпечаток ключа:</p>
+                  <p>
+                    Подлинность {hop.jump ? "сервера-посредника" : "сервера"} {host} ещё не подтверждена. Сверьте отпечаток ключа:
+                  </p>
                 )}
                 <code className="fingerprint">
                   {alg ? `${alg} ` : ""}
@@ -147,11 +164,11 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
             ),
             okText: changed ? "Доверять новому ключу" : "Доверять и подключиться",
           });
-          if (ok) return connect({ ...opts, accept: fp });
+          if (ok) return connect({ ...opts, accept: { ...opts.accept, [hop.id]: fp } });
           t.write("\x1b[90mОтменено.\x1b[0m\r\n");
           return updateStatus("closed");
         }
-        const text = msg === "AUTH_FAILED" ? "Сервер отклонил ключ" : msg;
+        const text = msg === "AUTH_FAILED" ? (hop.jump ? `Сервер-посредник ${hop.label} отклонил ключ` : "Сервер отклонил ключ") : msg;
         t.write(`\x1b[31m${text}\x1b[0m\r\n\x1b[90mНажмите Enter, чтобы попробовать снова.\x1b[0m\r\n`);
         updateStatus("error");
       }

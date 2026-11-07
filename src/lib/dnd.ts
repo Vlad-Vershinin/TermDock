@@ -5,7 +5,11 @@
 // carry `data-dropdir="<path>"` to receive the drop into that folder.
 // Targets get a `td-drop` CustomEvent with a DropDetail.
 
-export type DragSource = { kind: "local" | "remote"; tabId: string; paths: string[] } | { kind: "os"; paths: string[] };
+export type DragSource =
+  | { kind: "local" | "remote"; tabId: string; paths: string[] }
+  | { kind: "os"; paths: string[] }
+  /** Servers dragged in the sidebar (into / out of folders). */
+  | { kind: "server"; ids: string[]; paths?: undefined };
 
 export interface DropDetail {
   source: DragSource;
@@ -80,6 +84,10 @@ export function beginDrag(e: React.PointerEvent, getSource: () => DragSource, la
       ghost.remove();
       document.body.classList.remove("dragging");
       if (source) dropAt(ev.clientX, ev.clientY, source);
+      // A drag that ends on the row it started from must not also count as a click.
+      const stop = (ce: MouseEvent) => ce.stopPropagation();
+      window.addEventListener("click", stop, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener("click", stop, { capture: true }), 0);
     }
   };
   const esc = (ev: KeyboardEvent) => {

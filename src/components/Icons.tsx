@@ -12,6 +12,12 @@ const svg = (paths: React.ReactNode) =>
   };
 
 export const IFolder = svg(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="currentColor" fillOpacity=".18" />);
+export const IFolderOut = svg(
+  <>
+    <path d="M10 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3" />
+    <path d="M15 17h6M18 14l3 3-3 3" />
+  </>,
+);
 export const IFile = svg(
   <>
     <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />

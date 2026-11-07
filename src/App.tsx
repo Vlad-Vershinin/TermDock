@@ -43,6 +43,9 @@ function Main() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [editing, setEditing] = useState<Server | null | undefined>(undefined); // undefined = closed
+  /** Folder preselected when adding a server from a folder's menu. */
+  const [newInFolder, setNewInFolder] = useState<string | undefined>(undefined);
+  const [folders, setFolders] = useState<string[]>([]);
   const [showTransfers, setShowTransfers] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("td.sidebar") !== "0");
   const [sidebarWidth, setSidebarWidth] = useState(() => Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, readNumber("td.sidebarWidth", 270))));
@@ -53,9 +56,19 @@ function Main() {
   const activeRef = useRef(active);
   activeRef.current = active;
 
+  const reloadServers = useCallback(
+    () =>
+      Promise.all([api.listServers(), api.listFolders()])
+        .then(([s, f]) => {
+          setServers(s);
+          setFolders(f);
+        })
+        .catch((e) => ui.toast(errorText(e), "error")),
+    [ui],
+  );
   useEffect(() => {
-    api.listServers().then(setServers).catch((e) => ui.toast(errorText(e), "error"));
-  }, [ui]);
+    reloadServers();
+  }, [reloadServers]);
 
   // Files dropped from the OS file manager: route to the drop zone under the cursor.
   useEffect(() => {
@@ -226,6 +239,8 @@ function Main() {
 
   const onSaved = (s: Server, connect: boolean) => {
     setServers((l) => (l.some((x) => x.id === s.id) ? l.map((x) => (x.id === s.id ? s : x)) : [...l, s]));
+    const f = s.group?.trim();
+    if (f) setFolders((l) => (l.includes(f) ? l : [...l, f]));
     setEditing(undefined);
     if (connect) openSession(s, true);
   };
@@ -264,7 +279,10 @@ function Main() {
       if (mod && e.shiftKey && e.code === "KeyK") {
         toggleSidebar(true);
         requestAnimationFrame(() => document.getElementById("server-search")?.focus());
-      } else if (mod && e.shiftKey && e.code === "KeyN") setEditing(null);
+      } else if (mod && e.shiftKey && e.code === "KeyN") {
+        setNewInFolder(undefined);
+        setEditing(null);
+      }
       else if (mod && e.shiftKey && e.code === "KeyW" && tab) closePane(tab.id, tab.focus);
       else if (mod && e.shiftKey && e.code === "KeyD" && tab) duplicateTab(tab.id);
       else if (mod && e.key === "Tab" && list.length) {
@@ -327,7 +345,61 @@ function Main() {
     });
   }, [tabs, servers]);
 
-  const groups = useMemo(() => [...new Set(servers.map((s) => s.group?.trim()).filter((g): g is string => !!g))], [servers]);
+  // ---------- folders ----------
+
+  const addServer = (folder?: string) => {
+    setNewInFolder(folder);
+    setEditing(null);
+  };
+
+  const createFolder = async () => {
+    const name = (await ui.prompt("Новая папка", "Название папки"))?.trim();
+    if (!name) return;
+    if (folders.includes(name)) return ui.toast(`Папка «${name}» уже есть`, "error");
+    try {
+      setFolders(await api.saveFolders([...folders, name]));
+    } catch (e) {
+      ui.toast(errorText(e), "error");
+    }
+  };
+
+  const renameFolder = async (from: string) => {
+    const to = (await ui.prompt("Переименовать папку", "Название папки", from))?.trim();
+    if (!to || to === from) return;
+    try {
+      await api.renameFolder(from, to);
+      await reloadServers();
+    } catch (e) {
+      ui.toast(errorText(e), "error");
+    }
+  };
+
+  const deleteFolder = async (name: string) => {
+    const n = servers.filter((s) => s.group?.trim() === name).length;
+    const msg = n ? `Серверы из неё (${n}) останутся в списке, без папки.` : undefined;
+    if (!(await ui.confirm(`Удалить папку «${name}»?`, msg, true))) return;
+    try {
+      await api.deleteFolder(name);
+      await reloadServers();
+    } catch (e) {
+      ui.toast(errorText(e), "error");
+    }
+  };
+
+  /** folder: "" = out of any folder. */
+  const moveToFolder = async (ids: string[], folder: string) => {
+    try {
+      for (const id of ids) {
+        const s = servers.find((x) => x.id === id);
+        if (!s || (s.group?.trim() ?? "") === folder) continue;
+        const saved = await api.saveServer({ ...s, group: folder || null });
+        setServers((l) => l.map((x) => (x.id === saved.id ? saved : x)));
+      }
+      if (folder) setFolders((l) => (l.includes(folder) ? l : [...l, folder]));
+    } catch (e) {
+      ui.toast(errorText(e), "error");
+    }
+  };
   const running = transfers.filter((t) => t.progress.status === "running").length;
 
   const tabMenu = (e: React.MouseEvent, id: string) => {
@@ -344,12 +416,12 @@ function Main() {
 
   const newTabMenu = (e: React.MouseEvent<HTMLElement>) => {
     const items: MenuItem[] = [];
-    for (const [group, list] of groupServers(servers, "")) {
+    for (const [group, list] of groupServers(servers, "", folders)) {
       if (group) items.push({ header: group });
       for (const s of list) items.push({ label: s.name, icon: <IPlay size={13} />, hint: s.host, onClick: () => openSession(s, true) });
     }
     if (items.length) items.push("-");
-    items.push({ label: "Добавить сервер…", icon: <IPlus size={13} />, hint: "Ctrl+Shift+N", onClick: () => setEditing(null) });
+    items.push({ label: "Добавить сервер…", icon: <IPlus size={13} />, hint: "Ctrl+Shift+N", onClick: () => addServer() });
     ui.menu(e.currentTarget, items);
   };
 
@@ -396,13 +468,18 @@ function Main() {
             onResize={resizeSidebar}
             onConnect={openSession}
             onSplitOpen={activeTab ? (s, dir) => splitTab(activeTab.id, dir, s.id) : null}
-            onAdd={() => setEditing(null)}
+            folders={folders}
+            onAdd={addServer}
             onEdit={(s) => setEditing(s)}
             onDelete={deleteServer}
+            onAddFolder={createFolder}
+            onRenameFolder={renameFolder}
+            onDeleteFolder={deleteFolder}
+            onMove={moveToFolder}
           />
         )}
         <main className="content">
-          {active === null && <Home servers={servers} states={serverStates} onConnect={openSession} onAdd={() => setEditing(null)} />}
+          {active === null && <Home servers={servers} folders={folders} states={serverStates} onConnect={openSession} onAdd={() => addServer()} />}
           {tabs.map((t) => (
             <TabView
               key={t.id}
@@ -423,14 +500,26 @@ function Main() {
           />
         )}
       </div>
-      {editing !== undefined && <ServerDialog server={editing} groups={groups} onClose={() => setEditing(undefined)} onSaved={onSaved} />}
+      {editing !== undefined && <ServerDialog server={editing} servers={servers} folders={folders} folder={editing ? undefined : newInFolder} onClose={() => setEditing(undefined)} onSaved={onSaved} />}
       <WindowEdges />
     </div>
   );
 }
 
-function Home({ servers, states, onConnect, onAdd }: { servers: Server[]; states: Record<string, ServerState>; onConnect: (s: Server) => void; onAdd: () => void }) {
-  const grouped = groupServers(servers, "");
+function Home({
+  servers,
+  folders,
+  states,
+  onConnect,
+  onAdd,
+}: {
+  servers: Server[];
+  folders: string[];
+  states: Record<string, ServerState>;
+  onConnect: (s: Server) => void;
+  onAdd: () => void;
+}) {
+  const grouped = groupServers(servers, "", folders);
   return (
     <div className="home">
       <div className="home-inner">

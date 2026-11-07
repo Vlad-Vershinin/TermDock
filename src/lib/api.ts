@@ -10,11 +10,28 @@ export interface Server {
   username: string;
   auth: AuthMethod;
   keyPath?: string | null;
+  /** Folder name; empty = not in a folder. */
   group?: string | null;
   color?: string | null;
   remoteDir?: string | null;
   hasSecret: boolean;
+  /** Connect through this jump host. */
+  jump?: Jump | null;
 }
+
+/** Jump host: a saved server (`serverId`) or one described by the fields below. */
+export interface Jump {
+  serverId?: string | null;
+  host: string;
+  port: number;
+  username: string;
+  auth: AuthMethod;
+  keyPath?: string | null;
+  hasSecret: boolean;
+}
+
+/** Keychain / prompt id of a server's custom jump host (matches the Rust side). */
+export const jumpHopId = (serverId: string) => `${serverId}#jump`;
 
 export interface Entry {
   name: string;
@@ -72,7 +89,8 @@ export interface Stats {
 export const api = {
   listServers: () => invoke<Server[]>("list_servers"),
   /** secret: undefined = keep, "" = forget, string = save */
-  saveServer: (server: Server, secret?: string) => invoke<Server>("save_server", { server, secret }),
+  /** secret / jumpSecret: undefined = keep, "" = forget, string = save */
+  saveServer: (server: Server, secret?: string, jumpSecret?: string) => invoke<Server>("save_server", { server, secret, jumpSecret }),
   deleteServer: (id: string) => invoke<void>("delete_server", { id }),
   reorderServers: (ids: string[]) => invoke<void>("reorder_servers", { ids }),
 
@@ -80,11 +98,19 @@ export const api = {
   saveScript: (script: Script) => invoke<Script>("save_script", { script }),
   deleteScript: (id: string) => invoke<void>("delete_script", { id }),
 
+  listFolders: () => invoke<string[]>("list_folders"),
+  saveFolders: (names: string[]) => invoke<string[]>("save_folders", { names }),
+  renameFolder: (from: string, to: string) => invoke<void>("rename_folder", { from, to }),
+  deleteFolder: (name: string) => invoke<void>("delete_folder", { name }),
+
+  /** secrets / accept are keyed by hop id: a server id or `jumpHopId(serverId)`. */
   connect: (args: {
     serverId: string;
-    secret?: string;
-    remember?: boolean;
-    acceptFingerprint?: string;
+    secrets?: Record<string, string>;
+    /** Hop ids whose typed secret should be saved after a successful connection. */
+    remember?: string[];
+    /** Confirmed host key fingerprints. */
+    accept?: Record<string, string>;
     cols: number;
     rows: number;
     onEvent: (e: TermEvent) => void;
@@ -93,9 +119,9 @@ export const api = {
     events.onmessage = args.onEvent;
     return invoke<string>("ssh_connect", {
       serverId: args.serverId,
-      secret: args.secret,
+      secrets: args.secrets,
       remember: args.remember,
-      acceptFingerprint: args.acceptFingerprint,
+      accept: args.accept,
       cols: args.cols,
       rows: args.rows,
       events,

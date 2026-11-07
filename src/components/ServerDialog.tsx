@@ -1,44 +1,98 @@
 import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, errorText, Server } from "../lib/api";
+import { api, AuthMethod, errorText, Jump, Server } from "../lib/api";
 import { useUi } from "../lib/ui";
 
 export const COLORS = ["#58a6ff", "#3fb950", "#d29922", "#ff7b72", "#bc8cff", "#39c5cf", "#f778ba", "#8b949e"];
 
 const empty: Server = { id: "", name: "", host: "", port: 22, username: "root", auth: "password", keyPath: "", group: "", color: COLORS[0], remoteDir: "", hasSecret: false };
 
+const emptyJump: Jump = { serverId: null, host: "", port: 22, username: "root", auth: "password", keyPath: "", hasSecret: false };
+
+type JumpMode = "none" | "saved" | "custom";
+
 interface Props {
   server: Server | null;
-  groups: string[];
+  /** All saved servers (candidates for the jump host). */
+  servers: Server[];
+  folders: string[];
+  /** Folder preselected for a new server. */
+  folder?: string;
   onClose: () => void;
   onSaved: (s: Server, connect: boolean) => void;
 }
 
-export function ServerDialog({ server, groups, onClose, onSaved }: Props) {
+// Accept "user@host:port" (or "ssh user@host") in a host field; parsed when leaving the field.
+function parseHost<T extends { host: string; username: string; port: number }>(s0: T): T {
+  const m = s0.host.trim().match(/^(?:ssh\s+)?(?:([^@\s]+)@)?([^:\s]+)(?::(\d+))?$/);
+  return m && (m[1] || m[3]) ? { ...s0, host: m[2], username: m[1] ?? s0.username, port: m[3] ? Number(m[3]) : s0.port } : s0;
+}
+
+/** Whether connecting to `s` goes through the server `id` (directly or via other jump hosts). */
+function goesThrough(s: Server, id: string, all: Server[], depth = 0): boolean {
+  if (s.id === id) return true;
+  const via = s.jump?.serverId && all.find((x) => x.id === s.jump!.serverId);
+  return !!via && depth < 10 && goesThrough(via, id, all, depth + 1);
+}
+
+export function ServerDialog({ server, servers, folders, folder, onClose, onSaved }: Props) {
   const ui = useUi();
-  const [s, setS] = useState<Server>(() => ({ ...empty, ...server }));
+  const [s, setS] = useState<Server>(() => ({ ...empty, group: folder ?? "", ...server }));
   const [secret, setSecret] = useState("");
   const [forget, setForget] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [jumpMode, setJumpMode] = useState<JumpMode>(() => (server?.jump?.serverId ? "saved" : server?.jump?.host ? "custom" : "none"));
+  const [jump, setJump] = useState<Jump>(() => ({ ...emptyJump, ...server?.jump }));
+  const [jumpSecret, setJumpSecret] = useState("");
+  const [jumpForget, setJumpForget] = useState(false);
+  const [extraFolders, setExtraFolders] = useState<string[]>([]);
+  const [jumpOpen] = useState(jumpMode !== "none");
   const set = <K extends keyof Server>(k: K, v: Server[K]) => setS((x) => ({ ...x, [k]: v }));
+  const setJ = <K extends keyof Jump>(k: K, v: Jump[K]) => setJump((x) => ({ ...x, [k]: v }));
 
-  // Accept "user@host:port" (or "ssh user@host") in the host field; parsed when leaving the field.
-  const parseHost = (s0: Server): Server => {
-    const m = s0.host.trim().match(/^(?:ssh\s+)?(?:([^@\s]+)@)?([^:\s]+)(?::(\d+))?$/);
-    return m && (m[1] || m[3]) ? { ...s0, host: m[2], username: m[1] ?? s0.username, port: m[3] ? Number(m[3]) : s0.port } : s0;
+  // A server can't go through itself, or through a server that already goes through it.
+  const jumpCandidates = servers.filter((x) => !s.id || !goesThrough(x, s.id, servers));
+  const folderOptions = [...new Set([...folders, ...extraFolders, ...(s.group?.trim() ? [s.group.trim()] : [])])];
+
+  const pickKey = async (apply: (path: string) => void) => {
+    const f = await openDialog({ title: "Приватный ключ SSH", multiple: false });
+    if (typeof f === "string") apply(f);
   };
 
-  const pickKey = async () => {
-    const f = await openDialog({ title: "Приватный ключ SSH", multiple: false });
-    if (typeof f === "string") set("keyPath", f);
+  const pickFolder = async (v: string) => {
+    if (v !== "\0new") return set("group", v);
+    const name = (await ui.prompt("Новая папка", "Название папки"))?.trim();
+    if (!name) return;
+    setExtraFolders((l) => [...l, name]);
+    set("group", name);
+  };
+
+  const buildJump = (): Jump | null => {
+    if (jumpMode === "saved") return jump.serverId ? { ...emptyJump, serverId: jump.serverId } : null;
+    if (jumpMode === "custom") {
+      const j = parseHost(jump);
+      return j.host.trim() ? { ...j, serverId: null, host: j.host.trim(), username: j.username.trim(), port: Number(j.port) || 22 } : null;
+    }
+    return null;
   };
 
   const save = async (connect: boolean) => {
+    if (jumpMode === "saved" && !jump.serverId) return ui.toast("Выберите сервер-посредник", "error");
+    if (jumpMode === "custom" && !jump.host.trim()) return ui.toast("Укажите хост сервера-посредника", "error");
     setBusy(true);
     try {
       const p = parseHost(s);
-      const toSave = { ...p, name: s.name.trim() || p.host.trim(), host: p.host.trim(), username: p.username.trim(), port: Number(p.port) || 22 };
-      const saved = await api.saveServer(toSave, forget ? "" : secret ? secret : undefined);
+      const toSave: Server = {
+        ...p,
+        name: s.name.trim() || p.host.trim(),
+        host: p.host.trim(),
+        username: p.username.trim(),
+        port: Number(p.port) || 22,
+        group: s.group?.trim() || null,
+        jump: buildJump(),
+      };
+      const js = jumpMode === "custom" ? (jumpForget ? "" : jumpSecret || undefined) : undefined;
+      const saved = await api.saveServer(toSave, forget ? "" : secret ? secret : undefined, js);
       onSaved(saved, connect);
     } catch (e) {
       ui.toast(errorText(e), "error");
@@ -78,13 +132,16 @@ export function ServerDialog({ server, groups, onClose, onSaved }: Props) {
             <input value={s.name} onChange={(e) => set("name", e.target.value)} placeholder={s.host || "prod-web-1"} />
           </label>
           <label className="field">
-            <span>Группа</span>
-            <input value={s.group ?? ""} onChange={(e) => set("group", e.target.value)} list="td-groups" placeholder="Работа, Личное…" />
-            <datalist id="td-groups">
-              {groups.map((g) => (
-                <option key={g} value={g} />
+            <span>Папка</span>
+            <select value={s.group?.trim() ?? ""} onChange={(e) => pickFolder(e.target.value)}>
+              <option value="">Без папки</option>
+              {folderOptions.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
               ))}
-            </datalist>
+              <option value={"\0new"}>+ Новая папка…</option>
+            </select>
           </label>
         </div>
 
@@ -102,7 +159,7 @@ export function ServerDialog({ server, groups, onClose, onSaved }: Props) {
             <span>Приватный ключ</span>
             <div className="row">
               <input value={s.keyPath ?? ""} onChange={(e) => set("keyPath", e.target.value)} placeholder="~/.ssh/id_ed25519" spellCheck={false} />
-              <button type="button" className="btn" onClick={pickKey}>
+              <button type="button" className="btn" onClick={() => pickKey((f) => set("keyPath", f))}>
                 Обзор…
               </button>
             </div>
@@ -125,6 +182,51 @@ export function ServerDialog({ server, groups, onClose, onSaved }: Props) {
           </label>
         )}
         <p className="hint">Пароли хранятся в системном хранилище (Windows Credential Manager / GNOME Keyring / KWallet), не в файле настроек.</p>
+
+        <details open={jumpOpen}>
+          <summary>Подключение через сервер-посредник{jumpMode !== "none" ? " — включено" : ""}</summary>
+          <p className="hint">Как ssh -J: сначала подключение к серверу-посреднику (bastion), через него — к этому серверу.</p>
+          <div className="segmented">
+            {(
+              [
+                ["none", "Напрямую"],
+                ["saved", "Сохранённый сервер"],
+                ["custom", "Другой сервер"],
+              ] as const
+            ).map(([m, label]) => (
+              <button type="button" key={m} className={jumpMode === m ? "on" : ""} onClick={() => setJumpMode(m)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {jumpMode === "saved" && (
+            <label className="field">
+              <span>Сервер-посредник</span>
+              <select value={jump.serverId ?? ""} onChange={(e) => setJ("serverId", e.target.value || null)}>
+                <option value="">— выберите —</option>
+                {jumpCandidates.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name} ({x.username}@{x.host}
+                    {x.port !== 22 ? `:${x.port}` : ""}){x.jump ? " — сам через посредника" : ""}
+                  </option>
+                ))}
+              </select>
+              {jumpCandidates.length === 0 && <span className="hint">Нет других сохранённых серверов — выберите «Другой сервер».</span>}
+            </label>
+          )}
+          {jumpMode === "custom" && (
+            <JumpFields
+              jump={jump}
+              set={setJ}
+              onBlurHost={() => setJump(parseHost)}
+              onPickKey={() => pickKey((f) => setJ("keyPath", f))}
+              secret={jumpSecret}
+              setSecret={setJumpSecret}
+              forget={jumpForget}
+              setForget={setJumpForget}
+            />
+          )}
+        </details>
 
         <details>
           <summary>Дополнительно</summary>
@@ -155,5 +257,71 @@ export function ServerDialog({ server, groups, onClose, onSaved }: Props) {
         </div>
       </form>
     </div>
+  );
+}
+
+function JumpFields(p: {
+  jump: Jump;
+  set: <K extends keyof Jump>(k: K, v: Jump[K]) => void;
+  onBlurHost: () => void;
+  onPickKey: () => void;
+  secret: string;
+  setSecret: (v: string) => void;
+  forget: boolean;
+  setForget: (v: boolean) => void;
+}) {
+  const { jump, set } = p;
+  const isKey = jump.auth === "key";
+  return (
+    <>
+      <div className="grid2">
+        <label className="field span2">
+          <span>Хост посредника</span>
+          <input value={jump.host} onChange={(e) => set("host", e.target.value)} onBlur={p.onBlurHost} placeholder="bastion.example.com или user@host:port" spellCheck={false} />
+        </label>
+        <label className="field">
+          <span>Пользователь</span>
+          <input value={jump.username} onChange={(e) => set("username", e.target.value)} spellCheck={false} />
+        </label>
+        <label className="field">
+          <span>Порт</span>
+          <input type="number" min={1} max={65535} value={jump.port} onChange={(e) => set("port", Number(e.target.value))} />
+        </label>
+      </div>
+      <div className="segmented">
+        {(["password", "key"] as AuthMethod[]).map((m) => (
+          <button type="button" key={m} className={jump.auth === m ? "on" : ""} onClick={() => set("auth", m)}>
+            {m === "password" ? "Пароль" : "SSH-ключ"}
+          </button>
+        ))}
+      </div>
+      {isKey && (
+        <label className="field">
+          <span>Приватный ключ посредника</span>
+          <div className="row">
+            <input value={jump.keyPath ?? ""} onChange={(e) => set("keyPath", e.target.value)} placeholder="~/.ssh/id_ed25519" spellCheck={false} />
+            <button type="button" className="btn" onClick={p.onPickKey}>
+              Обзор…
+            </button>
+          </div>
+        </label>
+      )}
+      <label className="field">
+        <span>{isKey ? "Passphrase ключа посредника (если есть)" : "Пароль посредника"}</span>
+        <input
+          type="password"
+          value={p.secret}
+          disabled={p.forget}
+          onChange={(e) => p.setSecret(e.target.value)}
+          placeholder={jump.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
+        />
+      </label>
+      {jump.hasSecret && (
+        <label className="check">
+          <input type="checkbox" checked={p.forget} onChange={(e) => p.setForget(e.target.checked)} />
+          Забыть сохранённый {isKey ? "passphrase" : "пароль"} посредника
+        </label>
+      )}
+    </>
   );
 }

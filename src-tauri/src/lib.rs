@@ -11,7 +11,9 @@ use tauri::{AppHandle, Manager, State};
 
 use files::{Entry, Transfers};
 use scripts::{Script, Scripts};
-use ssh::{ConnectParams, Sessions, TermEvent};
+use std::collections::HashMap;
+
+use ssh::{ConnectParams, Hop, Sessions, TermEvent};
 use store::{Server, Store};
 
 struct Paths {
@@ -25,9 +27,25 @@ fn list_servers(store: State<Store>) -> Vec<Server> {
     store.list()
 }
 
-/// `secret`: Some("") clears the saved secret, Some(x) saves x, None keeps the current one.
+/// Some("") clears the saved secret, Some(x) saves x, None keeps the current one.
+fn apply_secret(keychain_id: &str, secret: Option<&str>, has_secret: &mut bool) -> Result<(), String> {
+    match secret {
+        Some("") => {
+            store::delete_secret(keychain_id);
+            *has_secret = false;
+        }
+        Some(s) => {
+            store::set_secret(keychain_id, s)?;
+            *has_secret = true;
+        }
+        None => {}
+    }
+    Ok(())
+}
+
+/// `secret` / `jump_secret` (for a custom jump host): see `apply_secret`.
 #[tauri::command]
-fn save_server(store: State<Store>, mut server: Server, secret: Option<String>) -> Result<Server, String> {
+fn save_server(store: State<Store>, mut server: Server, secret: Option<String>, jump_secret: Option<String>) -> Result<Server, String> {
     if server.id.is_empty() {
         server.id = uuid::Uuid::new_v4().to_string();
     }
@@ -35,17 +53,35 @@ fn save_server(store: State<Store>, mut server: Server, secret: Option<String>) 
         return Err("Укажите хост и пользователя".into());
     }
     let previous = store.get(&server.id);
-    server.has_secret = previous.map(|p| p.has_secret).unwrap_or(false);
-    match secret.as_deref() {
-        Some("") => {
-            store::delete_secret(&server.id);
-            server.has_secret = false;
+    server.has_secret = previous.as_ref().map(|p| p.has_secret).unwrap_or(false);
+    apply_secret(&server.id, secret.as_deref(), &mut server.has_secret)?;
+
+    let jump_id = store::jump_secret_id(&server.id);
+    let had_jump_secret = previous.as_ref().and_then(|p| p.jump.as_ref()).is_some_and(|j| j.has_secret);
+    match server.jump.as_mut() {
+        Some(j) if j.server_id.as_deref().is_some_and(|id| !id.is_empty()) => {
+            if j.server_id.as_deref() == Some(server.id.as_str()) {
+                return Err("Сервер не может быть посредником для самого себя".into());
+            }
+            store::delete_secret(&jump_id);
         }
-        Some(s) => {
-            store::set_secret(&server.id, s)?;
-            server.has_secret = true;
+        Some(j) if j.is_custom() => {
+            j.server_id = None;
+            j.host = j.host.trim().to_string();
+            j.username = j.username.trim().to_string();
+            if j.username.is_empty() {
+                return Err("Укажите пользователя сервера-посредника".into());
+            }
+            if j.port == 0 {
+                j.port = 22;
+            }
+            j.has_secret = had_jump_secret;
+            apply_secret(&jump_id, jump_secret.as_deref(), &mut j.has_secret)?;
         }
-        None => {}
+        _ => {
+            server.jump = None;
+            store::delete_secret(&jump_id);
+        }
     }
     store.upsert(server)
 }
@@ -53,7 +89,29 @@ fn save_server(store: State<Store>, mut server: Server, secret: Option<String>) 
 #[tauri::command]
 fn delete_server(store: State<Store>, id: String) -> Result<(), String> {
     store::delete_secret(&id);
+    store::delete_secret(&store::jump_secret_id(&id));
     store.remove(&id)
+}
+
+#[tauri::command]
+fn list_folders(store: State<Store>) -> Vec<String> {
+    store.folders()
+}
+
+#[tauri::command]
+fn save_folders(store: State<Store>, names: Vec<String>) -> Result<Vec<String>, String> {
+    store.set_folders(names)?;
+    Ok(store.folders())
+}
+
+#[tauri::command]
+fn rename_folder(store: State<Store>, from: String, to: String) -> Result<(), String> {
+    store.rename_folder(&from, &to)
+}
+
+#[tauri::command]
+fn delete_folder(store: State<Store>, name: String) -> Result<(), String> {
+    store.delete_folder(&name)
 }
 
 #[tauri::command]
@@ -80,6 +138,50 @@ fn delete_script(scripts: State<Scripts>, id: String) -> Result<(), String> {
 
 // ---------- ssh ----------
 
+/// Jump hosts first, the server itself last. Saved jump servers may have their own jump hosts.
+fn resolve_hops(store: &Store, server: &Server, seen: &mut Vec<String>) -> Result<Vec<Hop>, String> {
+    if seen.contains(&server.id) {
+        return Err(format!("Серверы-посредники ссылаются друг на друга по кругу (на «{}»)", server.name));
+    }
+    seen.push(server.id.clone());
+    let mut hops = match &server.jump {
+        Some(j) if j.server_id.as_deref().is_some_and(|id| !id.is_empty()) => {
+            let via = store
+                .get(j.server_id.as_deref().unwrap())
+                .ok_or_else(|| format!("Сервер-посредник для «{}» не найден", server.name))?;
+            resolve_hops(store, &via, seen)?
+        }
+        Some(j) if j.is_custom() => {
+            let id = store::jump_secret_id(&server.id);
+            vec![Hop {
+                secret: if j.has_secret { store::get_secret(&id) } else { None },
+                id,
+                host: j.host.clone(),
+                port: if j.port == 0 { 22 } else { j.port },
+                username: j.username.clone(),
+                auth: j.auth.clone(),
+                key_path: j.key_path.clone(),
+                accept_fingerprint: None,
+            }]
+        }
+        _ => Vec::new(),
+    };
+    hops.push(Hop {
+        id: server.id.clone(),
+        secret: if server.has_secret { store::get_secret(&server.id) } else { None },
+        host: server.host.clone(),
+        port: server.port,
+        username: server.username.clone(),
+        auth: server.auth.clone(),
+        key_path: server.key_path.clone(),
+        accept_fingerprint: None,
+    });
+    Ok(hops)
+}
+
+/// `secrets` / `accept`: typed passwords and confirmed host key fingerprints, keyed by hop id
+/// (a server id, or `<server id>#jump` for a custom jump host). `remember`: hop ids whose typed
+/// secret should be saved once the connection works.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn ssh_connect(
@@ -87,30 +189,39 @@ async fn ssh_connect(
     sessions: State<'_, Sessions>,
     paths: State<'_, Paths>,
     server_id: String,
-    secret: Option<String>,
-    remember: Option<bool>,
-    accept_fingerprint: Option<String>,
+    secrets: Option<HashMap<String, String>>,
+    remember: Option<Vec<String>>,
+    accept: Option<HashMap<String, String>>,
     cols: u32,
     rows: u32,
     events: Channel<TermEvent>,
 ) -> Result<String, String> {
-    let mut server = store.get(&server_id).ok_or("Сервер не найден")?;
-    let typed = secret.clone();
-    let secret = secret.or_else(|| if server.has_secret { store::get_secret(&server.id) } else { None });
-    let params = ConnectParams {
-        server: server.clone(),
-        secret,
-        accept_fingerprint,
-        cols,
-        rows,
-        known_hosts: paths.known_hosts.clone(),
-    };
+    let server = store.get(&server_id).ok_or("Сервер не найден")?;
+    let typed = secrets.unwrap_or_default();
+    let accept = accept.unwrap_or_default();
+    let mut hops = resolve_hops(&store, &server, &mut Vec::new())?;
+    for hop in hops.iter_mut() {
+        if let Some(s) = typed.get(&hop.id) {
+            hop.secret = Some(s.clone());
+        }
+        hop.accept_fingerprint = accept.get(&hop.id).cloned();
+    }
+    let params = ConnectParams { hops, cols, rows, known_hosts: paths.known_hosts.clone() };
     let id = ssh::connect(&sessions, params, events).await?;
-    // Remember a password typed in the prompt only after it actually worked.
-    if let (Some(s), Some(true)) = (typed, remember) {
-        if store::set_secret(&server.id, &s).is_ok() {
-            server.has_secret = true;
-            let _ = store.upsert(server);
+    // Remember passwords typed in the prompt only after they actually worked.
+    for hop_id in remember.unwrap_or_default() {
+        let Some(secret) = typed.get(&hop_id) else { continue };
+        if store::set_secret(&hop_id, secret).is_err() {
+            continue;
+        }
+        if let Some(mut s) = store.get(&hop_id) {
+            s.has_secret = true;
+            let _ = store.upsert(s);
+        } else if let Some(mut owner) = hop_id.strip_suffix("#jump").and_then(|o| store.get(o)) {
+            if let Some(j) = owner.jump.as_mut() {
+                j.has_secret = true;
+            }
+            let _ = store.upsert(owner);
         }
     }
     Ok(id)
@@ -298,6 +409,10 @@ pub fn run() {
             save_server,
             delete_server,
             reorder_servers,
+            list_folders,
+            save_folders,
+            rename_folder,
+            delete_folder,
             list_scripts,
             save_script,
             delete_script,

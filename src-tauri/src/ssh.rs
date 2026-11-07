@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tokio::sync::mpsc;
 
-use crate::store::{AuthMethod, Server};
+use crate::store::AuthMethod;
 
 /// What happened with the server's host key during the handshake.
 #[derive(Default, Clone)]
@@ -101,6 +101,8 @@ pub struct ExecOutput {
 
 pub struct SshSession {
     handle: Arc<Handle<Client>>,
+    /// Connections to jump hosts, outermost first. Kept alive for the lifetime of the session.
+    jumps: Vec<Handle<Client>>,
     input: mpsc::UnboundedSender<Input>,
     sftp: tokio::sync::Mutex<Option<Arc<SftpSession>>>,
     /// Previous /proc/stat sample (idle, total) for CPU usage deltas.
@@ -129,20 +131,39 @@ impl Sessions {
     }
 }
 
-pub struct ConnectParams {
-    pub server: Server,
+/// One SSH connection in the chain: jump hosts first, the target server last.
+pub struct Hop {
+    /// Key for secrets / accepted fingerprints sent by the UI (and the keychain id).
+    pub id: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth: AuthMethod,
+    pub key_path: Option<String>,
     pub secret: Option<String>,
     pub accept_fingerprint: Option<String>,
+}
+
+impl Hop {
+    fn label(&self) -> String {
+        let port = if self.port == 22 { String::new() } else { format!(":{}", self.port) };
+        format!("{}@{}{port}", self.username, self.host)
+    }
+}
+
+pub struct ConnectParams {
+    pub hops: Vec<Hop>,
     pub cols: u32,
     pub rows: u32,
     pub known_hosts: PathBuf,
 }
 
-async fn authenticate(handle: &mut Handle<Client>, server: &Server, secret: Option<String>) -> Result<(), String> {
-    let user = server.username.clone();
-    let ok = match server.auth {
+async fn authenticate(handle: &mut Handle<Client>, hop: &Hop) -> Result<(), String> {
+    let user = hop.username.clone();
+    let secret = hop.secret.clone();
+    let ok = match hop.auth {
         AuthMethod::Password => {
-            let password = secret.ok_or("NEED_SECRET")?;
+            let password = secret.clone().ok_or("NEED_SECRET")?;
             let res = handle.authenticate_password(&user, &password).await.map_err(|e| e.to_string())?;
             if res.success() {
                 true
@@ -152,7 +173,7 @@ async fn authenticate(handle: &mut Handle<Client>, server: &Server, secret: Opti
             }
         }
         AuthMethod::Key => {
-            let path = server.key_path.clone().filter(|p| !p.trim().is_empty()).ok_or("Не указан путь к ключу")?;
+            let path = hop.key_path.clone().filter(|p| !p.trim().is_empty()).ok_or("Не указан путь к ключу")?;
             let path = expand_tilde(&path);
             let key = match keys::load_secret_key(&path, secret.as_deref()) {
                 Ok(k) => k,
@@ -205,25 +226,29 @@ pub fn expand_tilde(p: &str) -> PathBuf {
     PathBuf::from(p)
 }
 
-/// Connects, authenticates and opens an interactive shell. Output is streamed to `events`.
-pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<TermEvent>) -> Result<String, String> {
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Opens one hop: directly, or through a direct-tcpip channel of the previous hop.
+async fn open_hop(config: Arc<client::Config>, known_hosts: &std::path::Path, hop: &Hop, via: Option<&Handle<Client>>) -> Result<Handle<Client>, String> {
     let verdict = Arc::new(Mutex::new(HostKeyVerdict::None));
     let handler = Client {
-        host: p.server.host.clone(),
-        port: p.server.port,
-        known_hosts: p.known_hosts,
-        accept_fingerprint: p.accept_fingerprint,
+        host: hop.host.clone(),
+        port: hop.port,
+        known_hosts: known_hosts.to_path_buf(),
+        accept_fingerprint: hop.accept_fingerprint.clone(),
         verdict: verdict.clone(),
     };
-    let config = Arc::new(client::Config {
-        keepalive_interval: Some(Duration::from_secs(30)),
-        keepalive_max: 4,
-        ..Default::default()
-    });
-
-    let addr = (p.server.host.as_str(), p.server.port);
-    let connecting = client::connect(config, addr, handler);
-    let mut handle = match tokio::time::timeout(Duration::from_secs(15), connecting).await {
+    let res = match via {
+        None => tokio::time::timeout(CONNECT_TIMEOUT, client::connect(config, (hop.host.as_str(), hop.port), handler)).await,
+        Some(jump) => {
+            let channel = tokio::time::timeout(CONNECT_TIMEOUT, jump.channel_open_direct_tcpip(hop.host.clone(), hop.port as u32, "127.0.0.1", 0))
+                .await
+                .map_err(|_| format!("Таймаут: сервер-посредник не открыл туннель до {}:{}", hop.host, hop.port))?
+                .map_err(|e| format!("Сервер-посредник не смог подключиться к {}:{}: {e}", hop.host, hop.port))?;
+            tokio::time::timeout(CONNECT_TIMEOUT, client::connect_stream(config, channel.into_stream(), handler)).await
+        }
+    };
+    let mut handle = match res {
         Err(_) => return Err("Таймаут подключения (15 с)".into()),
         Ok(Ok(h)) => h,
         Ok(Err(e)) => {
@@ -234,8 +259,46 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<Term
             })
         }
     };
+    authenticate(&mut handle, hop).await?;
+    Ok(handle)
+}
 
-    authenticate(&mut handle, &p.server, p.secret).await?;
+/// Errors the UI can act on (ask for a password, confirm a host key) are tagged with the jump
+/// host they came from: `JUMP|<hop id>|<user@host>|<auth>|<code>`. Other errors are plain text.
+fn jump_error(hop: &Hop, e: String) -> String {
+    let actionable = e == "NEED_SECRET" || e == "AUTH_FAILED" || e.starts_with("HOSTKEY_");
+    if actionable {
+        let auth = if hop.auth == AuthMethod::Key { "key" } else { "password" };
+        format!("JUMP|{}|{}|{auth}|{e}", hop.id, hop.label())
+    } else {
+        format!("Сервер-посредник {}: {e}", hop.label())
+    }
+}
+
+/// Connects (through the jump hosts, if any), authenticates and opens an interactive shell.
+/// Output is streamed to `events`.
+pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<TermEvent>) -> Result<String, String> {
+    let config = Arc::new(client::Config {
+        keepalive_interval: Some(Duration::from_secs(30)),
+        keepalive_max: 4,
+        ..Default::default()
+    });
+
+    let last = p.hops.len().checked_sub(1).ok_or("Не указан сервер")?;
+    let mut chain: Vec<Handle<Client>> = Vec::with_capacity(p.hops.len());
+    for (i, hop) in p.hops.iter().enumerate() {
+        match open_hop(config.clone(), &p.known_hosts, hop, chain.last()).await {
+            Ok(h) => chain.push(h),
+            Err(e) => {
+                for h in chain.iter().rev() {
+                    let _ = h.disconnect(russh::Disconnect::ByApplication, "", "en").await;
+                }
+                return Err(if i < last { jump_error(hop, e) } else { e });
+            }
+        }
+    }
+    let handle = chain.pop().unwrap();
+    let jumps = chain;
 
     let channel = handle.channel_open_session().await.map_err(|e| e.to_string())?;
     channel
@@ -251,6 +314,7 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<Term
     let id = uuid::Uuid::new_v4().to_string();
     let session = Arc::new(SshSession {
         handle: Arc::new(handle),
+        jumps,
         input: tx,
         sftp: tokio::sync::Mutex::new(None),
         cpu_prev: Mutex::new(None),
@@ -358,5 +422,8 @@ impl SshSession {
 
     pub async fn close(&self) {
         let _ = self.handle.disconnect(russh::Disconnect::ByApplication, "", "en").await;
+        for h in self.jumps.iter().rev() {
+            let _ = h.disconnect(russh::Disconnect::ByApplication, "", "en").await;
+        }
     }
 }

@@ -138,6 +138,15 @@ body.maximized .win-edge { display: none; }
 .group-title { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); cursor: pointer; font-weight: 600; }
 .group-title:hover { color: var(--text); }
 .group-count { margin-left: auto; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+.group.folder > .group-title { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; color: var(--text); border-radius: 6px; padding: 5px 8px; }
+.group.folder > .group-title:hover { background: var(--bg-2); }
+.group.folder > .group-title .ico { color: var(--muted); flex: none; }
+.group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.server-item.nested { margin-left: 14px; }
+.folder-empty { margin-left: 30px; padding: 4px 8px 6px; font-size: 12px; color: var(--muted); }
+.server-via { color: var(--muted); opacity: .8; }
+.server-list.drop-hover { box-shadow: inset 0 0 0 1px var(--border-2); border-radius: 6px; }
+.group.drop-hover { background: rgba(53,116,240,.18); outline: 1px solid var(--accent); outline-offset: -1px; border-radius: 6px; }
 .chev { display: inline-block; transition: transform .15s; }
 .chev.closed { transform: rotate(-90deg); }
 .server-item { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; position: relative; }
@@ -345,7 +354,8 @@ td.mode { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > span { font-size: 12px; color: var(--muted); }
 .field input { height: 30px; padding: 0 10px; border-radius: var(--radius); border: 1px solid var(--border-2); background: var(--bg-input); outline: none; min-width: 0; }
-.field input:focus, .code-input:focus { border-color: var(--accent); }
+.field select { height: 30px; padding: 0 8px; border-radius: var(--radius); border: 1px solid var(--border-2); background: var(--bg-input); outline: none; min-width: 0; }
+.field input:focus, .field select:focus, .code-input:focus { border-color: var(--accent); }
 .field input:disabled { opacity: .5; }
 .code-input { width: 100%; resize: vertical; min-height: 160px; padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--border-2); background: var(--bg-input); outline: none; font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace; font-size: 12.5px; line-height: 1.5; white-space: pre; tab-size: 2; }
 .row { display: flex; gap: 6px; }
