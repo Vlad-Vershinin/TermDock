@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Main window permissions",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "clipboard-manager:allow-read-text", "clipboard-manager:allow-write-text", "opener:default", "core:window:allow-start-dragging", "core:window:allow-start-resize-dragging", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-close", "core:window:allow-is-maximized"]
+  "permissions": ["core:default", "dialog:default", "clipboard-manager:allow-read-text", "clipboard-manager:allow-write-text", "opener:default", "drag:default", "core:window:allow-start-dragging", "core:window:allow-start-resize-dragging", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-close", "core:window:allow-is-maximized"]
 }

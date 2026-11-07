@@ -1,3 +1,4 @@
+mod dragout;
 mod files;
 mod scripts;
 mod ssh;
@@ -394,6 +395,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_drag::init())
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -402,6 +404,7 @@ pub fn run() {
             app.manage(Paths { known_hosts: dir.join("known_hosts") });
             app.manage(Sessions::default());
             app.manage(Transfers::default());
+            std::thread::spawn(dragout::cleanup_old);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -440,6 +443,8 @@ pub fn run() {
             upload,
             download,
             cancel_transfer,
+            dragout::drag_temp_dir,
+            dragout::mouse_button_held,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TermDock");

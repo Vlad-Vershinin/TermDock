@@ -3,6 +3,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api, Entry, errorText, Server } from "../lib/api";
 import { beginDrag, DropDetail } from "../lib/dnd";
+import { dragOutLocal, dragOutRemote } from "../lib/dragout";
 import { baseName, formatDate, formatMode, formatSize, joinPath, parentPath } from "../lib/paths";
 import { useTransfers } from "../lib/transfers";
 import { MenuItem, useUi } from "../lib/ui";
@@ -165,6 +166,20 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
     local.refresh();
   };
 
+  // Remote rows dragged out of the window: download to a temp folder, then drag natively (see dragout.ts).
+  const dragOutRemoteFiles = (paths: string[]) => {
+    if (!sessionId) return;
+    const items = remote.entries.filter((e) => paths.includes(e.path));
+    const total = items.reduce((n, e) => n + (e.isDir ? 0 : e.size), 0);
+    dragOutRemote({
+      key: [sessionId, ...items.map((e) => `${e.path}:${e.size}:${e.modified ?? ""}`)].join("|"),
+      names: items.map((e) => e.name),
+      big: items.some((e) => e.isDir) || items.length > 20 || total > 50 * 1024 * 1024,
+      download: (dir) => transfers.start({ direction: "down", sessionId, server: server.name, sources: items.map((e) => e.path), dest: dir }),
+      toast: ui.toast,
+    });
+  };
+
   const move = async (pane: Pane, paths: string[], dir: string) => {
     const remoteSide = pane.side === "remote";
     try {
@@ -208,6 +223,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
         accept="remote,local"
         onDrop={(d) => onDrop(local, d)}
         onOpenFile={(e) => upload([e.path])}
+        onDragOut={(paths) => dragOutLocal(paths, ui.toast)}
         transfer={sessionId ? { label: "Загрузить на сервер", icon: <IUpload size={13} />, run: upload } : undefined}
         extra={
           <button className="btn btn-sm" disabled={!sessionId || local.selected.size === 0} onClick={() => upload(selectedPaths(local))} title="Загрузить выбранное на сервер">
@@ -223,6 +239,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
         disabledText={sessionId ? undefined : "Нет подключения"}
         onDrop={(d) => onDrop(remote, d)}
         onOpenFile={(e) => download([e.path])}
+        onDragOut={dragOutRemoteFiles}
         transfer={{ label: "Скачать на компьютер", icon: <IDownload size={13} />, run: download }}
         onCd={onCd}
         extra={
@@ -252,9 +269,11 @@ interface PaneProps {
   /** Upload (local pane) / download (remote pane) for the context menu. */
   transfer?: { label: string; icon: React.ReactNode; run: (paths: string[]) => void };
   onCd?: (dir: string) => void;
+  /** Rows dragged out of the window, into the OS file manager. */
+  onDragOut?: (paths: string[]) => void;
 }
 
-function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onOpenFile, transfer, onCd }: PaneProps) {
+function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onOpenFile, transfer, onCd, onDragOut }: PaneProps) {
   const ui = useUi();
   const [editing, setEditing] = useState<string | null>(null);
   const zoneRef = useRef<HTMLDivElement>(null);
@@ -505,7 +524,7 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
                   onContextMenu={(ev) => rowMenu(ev, e)}
                   onPointerDown={(ev) => {
                     const paths = pane.selected.has(e.path) ? [...pane.selected] : [e.path];
-                    beginDrag(ev, () => ({ kind: pane.side, tabId, paths }), paths.length > 1 ? `${paths.length} объектов` : e.name);
+                    beginDrag(ev, () => ({ kind: pane.side, tabId, paths }), paths.length > 1 ? `${paths.length} объектов` : e.name, onDragOut && (() => onDragOut(paths)));
                   }}
                 >
                   <td className="name">
