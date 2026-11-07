@@ -60,7 +60,7 @@ export function Telemetry({ sessionId, visible }: { sessionId: string | null; vi
         if (stop) return;
         failures++;
         setError(errorText(e));
-        if (failures >= 3) return; // not Linux / no permissions: stop polling
+        if (failures >= 3) return; // unsupported system / no permissions: stop polling
       }
       // The first sample has no CPU delta yet; take the second one sooner.
       timer = window.setTimeout(() => tick(false), first ? 1000 : INTERVAL);

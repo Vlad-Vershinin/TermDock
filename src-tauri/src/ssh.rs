@@ -105,8 +105,8 @@ pub struct SshSession {
     jumps: Vec<Handle<Client>>,
     input: mpsc::UnboundedSender<Input>,
     sftp: tokio::sync::Mutex<Option<Arc<SftpSession>>>,
-    /// Previous /proc/stat sample (idle, total) for CPU usage deltas.
-    cpu_prev: Mutex<Option<(u64, u64)>>,
+    /// Telemetry: detected command flavour and previous CPU sample.
+    stats_state: Mutex<crate::stats::State>,
 }
 
 enum Input {
@@ -317,7 +317,7 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<Term
         jumps,
         input: tx,
         sftp: tokio::sync::Mutex::new(None),
-        cpu_prev: Mutex::new(None),
+        stats_state: Mutex::default(),
     });
     sessions.insert(id.clone(), session);
 
@@ -399,24 +399,32 @@ impl SshSession {
         tokio::time::timeout(timeout, run).await.map_err(|_| "Таймаут выполнения команды".to_string())?
     }
 
-    /// Basic server telemetry (Linux: /proc + df).
+    /// Basic server telemetry: Linux / macOS / FreeBSD via `sh`, Windows via PowerShell.
     pub async fn stats(&self) -> Result<crate::stats::Stats, String> {
-        let out = self.exec(crate::stats::COMMAND, Duration::from_secs(10)).await?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        let mut stats = crate::stats::parse(&text);
-        if let Some((idle, total)) = stats.cpu_sample {
-            let mut prev = self.cpu_prev.lock().unwrap();
-            if let Some((pi, pt)) = *prev {
-                let (di, dt) = (idle.saturating_sub(pi), total.saturating_sub(pt));
-                if dt > 0 {
-                    stats.cpu = Some(100.0 * (1.0 - di as f32 / dt as f32));
-                }
+        use crate::stats::{parse, powershell_command, Flavour};
+        let known = self.stats_state.lock().unwrap().flavour;
+        let mut found = None;
+        for flavour in [Flavour::Sh, Flavour::PowerShell] {
+            if known.is_some_and(|k| k != flavour) {
+                continue;
             }
-            *prev = Some((idle, total));
+            let command = match flavour {
+                Flavour::Sh => crate::stats::COMMAND.to_string(),
+                Flavour::PowerShell => powershell_command(),
+            };
+            let out = self.exec(&command, Duration::from_secs(10)).await?;
+            let stats = parse(&String::from_utf8_lossy(&out.stdout));
+            if stats.is_valid() {
+                found = Some((flavour, stats));
+                break;
+            }
         }
-        if stats.mem_total == 0 {
-            return Err("Телеметрия доступна только для Linux-серверов".into());
-        }
+        let Some((flavour, mut stats)) = found else {
+            return Err("Не удалось получить телеметрию: неподдерживаемая система".into());
+        };
+        let mut state = self.stats_state.lock().unwrap();
+        state.flavour = Some(flavour);
+        state.apply_cpu(&mut stats);
         Ok(stats)
     }
 
