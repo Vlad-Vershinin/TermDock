@@ -42,6 +42,8 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
   const termZone = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
+  /** Fits the terminal to its box, keeping the content anchored to the bottom when it grows. */
+  const refit = useRef<() => void>(() => fit.current?.fit());
   const sessionRef = useRef<string | null>(null);
   const disposed = useRef(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -196,6 +198,31 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     fit.current = f;
     f.fit();
 
+    // When the terminal grows taller, xterm.js only pulls lines back from the scrollback if the
+    // cursor is on the last row; otherwise it adds blank rows at the bottom. TUIs with the cursor
+    // mid-screen (e.g. Claude Code's input box) then stay squeezed in the old height. So, like
+    // most terminals, keep the content anchored to the bottom: move the cursor to the last row,
+    // resize, and put it back where it was (shifted by the lines pulled from the scrollback).
+    // Done inside write callbacks so it lines up with output that is still being parsed.
+    refit.current = () => {
+      t.write("", () => {
+        const d = f.proposeDimensions();
+        if (!d || !Number.isFinite(d.cols) || !Number.isFinite(d.rows) || d.cols < 1 || d.rows < 1) return;
+        if (d.cols === t.cols && d.rows === t.rows) return;
+        const buf = t.buffer.active;
+        const { cursorX: x, cursorY: y, baseY } = buf;
+        if (d.rows <= t.rows || d.cols !== t.cols || buf.type !== "normal" || baseY === 0 || y >= t.rows - 1) {
+          t.resize(d.cols, d.rows);
+          return;
+        }
+        t.write(`\x1b[${t.rows};1H`, () => {
+          t.resize(d.cols, d.rows);
+          const pulled = baseY - t.buffer.active.baseY;
+          t.write(`\x1b[${y + pulled + 1};${x + 1}H`);
+        });
+      });
+    };
+
     const enc = new TextEncoder();
     const send = (s: string) => sessionRef.current && api.write(sessionRef.current, enc.encode(s)).catch(() => {});
 
@@ -213,7 +240,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     const setFont = (size: number) => {
       t.options.fontSize = Math.max(8, Math.min(32, size));
       localStorage.setItem("td.fontSize", String(t.options.fontSize));
-      f.fit();
+      refit.current();
     };
 
     t.attachCustomKeyEventHandler((e) => {
@@ -246,7 +273,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     termEl.current!.addEventListener("contextmenu", onContext);
 
     const ro = new ResizeObserver(() => {
-      if (termEl.current && termEl.current.offsetWidth > 0) f.fit();
+      if (termEl.current && termEl.current.offsetWidth > 0) refit.current();
     });
     ro.observe(termEl.current!);
 
@@ -270,7 +297,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
   useEffect(() => {
     if (!visible) return;
     requestAnimationFrame(() => {
-      fit.current?.fit();
+      refit.current();
       // Don't steal focus from the file panel / bar of this pane when it was clicked.
       if (focused && !rootRef.current?.contains(document.activeElement)) term.current?.focus();
     });
