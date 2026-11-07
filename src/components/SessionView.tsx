@@ -5,7 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "../lib/open";
 import "@xterm/xterm/css/xterm.css";
-import { api, errorText, Server } from "../lib/api";
+import { api, configJumpText, errorText, Server } from "../lib/api";
 import { DropDetail } from "../lib/dnd";
 import { paneRegistry } from "../lib/sessions";
 import { useTransfers } from "../lib/transfers";
@@ -79,7 +79,13 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       const t = term.current!;
       updateStatus("connecting");
       const j = server.jump;
-      const via = j?.serverId ? " через сервер-посредник" : j?.host ? ` через ${j.username}@${j.host}${j.port && j.port !== 22 ? `:${j.port}` : ""}` : "";
+      let via = j?.serverId ? " через сервер-посредник" : j?.host ? ` через ${j.username}@${j.host}${j.port && j.port !== 22 ? `:${j.port}` : ""}` : "";
+      if (!via) {
+        // No jump host in the app: ProxyJump from ~/.ssh/config may apply.
+        const cfg = await api.sshConfigLookup(server.host, server.port).catch(() => null);
+        if (disposed.current) return;
+        if (cfg?.jumps.length) via = ` через ${configJumpText(cfg)} (из ~/.ssh/config)`;
+      }
       t.write(`\r\n\x1b[90mПодключение к ${server.username}@${server.host}:${server.port}${via}…\x1b[0m\r\n`);
       try {
         fit.current?.fit();

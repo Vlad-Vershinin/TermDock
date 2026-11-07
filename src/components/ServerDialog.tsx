@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, AuthMethod, errorText, Jump, Server } from "../lib/api";
+import { api, AuthMethod, configJumpText, errorText, Jump, Server, SshConfigInfo } from "../lib/api";
 import { useUi } from "../lib/ui";
 import { useScripts } from "./Scripts";
 
@@ -50,6 +50,20 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
   const [extraFolders, setExtraFolders] = useState<string[]>([]);
   const [jumpOpen] = useState(jumpMode !== "none");
   const set = <K extends keyof Server>(k: K, v: Server[K]) => setS((x) => ({ ...x, [k]: v }));
+  // What ~/.ssh/config says about the typed host (HostName / ProxyJump hints).
+  const [sshCfg, setSshCfg] = useState<SshConfigInfo | null>(null);
+  useEffect(() => {
+    const host = parseHost(s).host.trim();
+    if (!host) return setSshCfg(null);
+    let stop = false;
+    const t = setTimeout(() => {
+      api.sshConfigLookup(host, Number(s.port) || 22).then((c) => !stop && setSshCfg(c), () => !stop && setSshCfg(null));
+    }, 300);
+    return () => {
+      stop = true;
+      clearTimeout(t);
+    };
+  }, [s.host, s.port]);
   const setJ = <K extends keyof Jump>(k: K, v: Jump[K]) => setJump((x) => ({ ...x, [k]: v }));
 
   // A server can't go through itself, or through a server that already goes through it.
@@ -120,6 +134,12 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
           <label className="field span2">
             <span>Хост</span>
             <input autoFocus value={s.host} onChange={(e) => set("host", e.target.value)} onBlur={() => setS(parseHost)} placeholder="192.168.1.10 или user@example.com:2222" spellCheck={false} />
+            {sshCfg && (sshCfg.hostname || sshCfg.port !== (Number(s.port) || 22)) && (
+              <span className="hint">
+                Из ~/.ssh/config: адрес {sshCfg.hostname ?? parseHost(s).host.trim()}
+                {sshCfg.port !== 22 ? `:${sshCfg.port}` : ""}
+              </span>
+            )}
           </label>
           <label className="field">
             <span>Пользователь</span>
@@ -187,6 +207,13 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
         <details open={jumpOpen}>
           <summary>Подключение через сервер-посредник{jumpMode !== "none" ? " — включено" : ""}</summary>
           <p className="hint">Как ssh -J: сначала подключение к серверу-посреднику (bastion), через него — к этому серверу.</p>
+          {sshCfg?.error && <p className="hint err">~/.ssh/config: {sshCfg.error}</p>}
+          {sshCfg && sshCfg.jumps.length > 0 && (
+            <p className="hint" title={sshCfg.jumps.map((j) => `${j.alias}: ${j.label}`).join("\n")}>
+              Из ~/.ssh/config: через {configJumpText(sshCfg)}
+              {jumpMode === "none" ? " — будет использовано при подключении «Напрямую»." : " — не используется: настройка посредника здесь важнее."}
+            </p>
+          )}
           <div className="segmented">
             {(
               [

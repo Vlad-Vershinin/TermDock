@@ -132,6 +132,7 @@ impl Sessions {
 }
 
 /// One SSH connection in the chain: jump hosts first, the target server last.
+#[derive(Clone)]
 pub struct Hop {
     /// Key for secrets / accepted fingerprints sent by the UI (and the keychain id).
     pub id: String,
@@ -145,7 +146,7 @@ pub struct Hop {
 }
 
 impl Hop {
-    fn label(&self) -> String {
+    pub fn label(&self) -> String {
         let port = if self.port == 22 { String::new() } else { format!(":{}", self.port) };
         format!("{}@{}{port}", self.username, self.host)
     }

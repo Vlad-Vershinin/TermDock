@@ -35,6 +35,19 @@ export interface Jump {
 /** Keychain / prompt id of a server's custom jump host (matches the Rust side). */
 export const jumpHopId = (serverId: string) => `${serverId}#jump`;
 
+/** What ~/.ssh/config defines for a host (see `ssh_config_lookup`). */
+export interface SshConfigInfo {
+  /** Real address when HostName differs from the typed host. */
+  hostname?: string | null;
+  port: number;
+  /** ProxyJump chain, outermost first. */
+  jumps: { alias: string; label: string }[];
+  error?: string | null;
+}
+
+/** "через bastion → gw" for a ProxyJump chain from ~/.ssh/config. */
+export const configJumpText = (c: SshConfigInfo) => c.jumps.map((j) => j.alias).join(" → ");
+
 export interface Entry {
   name: string;
   path: string;
@@ -131,6 +144,7 @@ export const api = {
       events,
     });
   },
+  sshConfigLookup: (host: string, port?: number) => invoke<SshConfigInfo | null>("ssh_config_lookup", { host, port }),
   write: (sessionId: string, data: Uint8Array) => invoke<void>("ssh_write", { sessionId, data: Array.from(data) }),
   resize: (sessionId: string, cols: number, rows: number) => invoke<void>("ssh_resize", { sessionId, cols, rows }),
   disconnect: (sessionId: string) => invoke<void>("ssh_disconnect", { sessionId }),
