@@ -127,12 +127,12 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         // Errors from a jump host: JUMP|<hop id>|<user@host>|<auth>|<code>
         const jm = raw.match(/^JUMP\|([^|]*)\|([^|]*)\|([^|]*)\|([\s\S]*)$/);
         const hop = jm
-          ? { id: jm[1], label: jm[2], isKey: jm[3] === "key", jump: true, msg: jm[4] }
-          : { id: server.id, label: `${server.username}@${server.host}`, isKey: server.auth === "key", jump: false, msg: raw };
+          ? { id: jm[1], label: jm[2], isKey: jm[3] === "key", isAgent: jm[3] === "agent", jump: true, msg: jm[4] }
+          : { id: server.id, label: `${server.username}@${server.host}`, isKey: server.auth === "key", isAgent: server.auth === "agent", jump: false, msg: raw };
         const host = hop.label.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
         const what = hop.jump ? "сервера-посредника " : "";
         const msg = hop.msg;
-        if (msg === "NEED_SECRET" || (msg === "AUTH_FAILED" && !hop.isKey)) {
+        if (msg === "NEED_SECRET" || (msg === "AUTH_FAILED" && !hop.isKey && !hop.isAgent)) {
           const r = await ui.dialog({
             title: hop.isKey ? `Пароль от ключа ${what}${hop.label}` : `Пароль ${what}${hop.label}`,
             message: msg === "AUTH_FAILED" ? <span className="err">Неверный пароль, попробуйте ещё раз.</span> : undefined,

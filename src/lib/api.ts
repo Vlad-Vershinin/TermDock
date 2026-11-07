@@ -1,6 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-export type AuthMethod = "password" | "key";
+export type AuthMethod = "password" | "key" | "agent";
 
 export interface Server {
   id: string;

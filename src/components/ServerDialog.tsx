@@ -147,14 +147,7 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
           </label>
         </div>
 
-        <div className="segmented">
-          <button type="button" className={!isKey ? "on" : ""} onClick={() => set("auth", "password")}>
-            Пароль
-          </button>
-          <button type="button" className={isKey ? "on" : ""} onClick={() => set("auth", "key")}>
-            SSH-ключ
-          </button>
-        </div>
+        <AuthSwitch value={s.auth} onChange={(m) => set("auth", m)} />
 
         {isKey && (
           <label className="field">
@@ -167,23 +160,29 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
             </div>
           </label>
         )}
-        <label className="field">
-          <span>{isKey ? "Passphrase ключа (если есть)" : "Пароль"}</span>
-          <input
-            type="password"
-            value={secret}
-            disabled={forget}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder={s.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
-          />
-        </label>
-        {s.hasSecret && (
-          <label className="check">
-            <input type="checkbox" checked={forget} onChange={(e) => setForget(e.target.checked)} />
-            Забыть сохранённый {isKey ? "passphrase" : "пароль"}
-          </label>
+        {s.auth === "agent" ? (
+          <p className="hint">{AGENT_HINT}</p>
+        ) : (
+          <>
+            <label className="field">
+              <span>{isKey ? "Passphrase ключа (если есть)" : "Пароль"}</span>
+              <input
+                type="password"
+                value={secret}
+                disabled={forget}
+                onChange={(e) => setSecret(e.target.value)}
+                placeholder={s.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
+              />
+            </label>
+            {s.hasSecret && (
+              <label className="check">
+                <input type="checkbox" checked={forget} onChange={(e) => setForget(e.target.checked)} />
+                Забыть сохранённый {isKey ? "passphrase" : "пароль"}
+              </label>
+            )}
+            <p className="hint">Пароли хранятся в системном хранилище (Windows Credential Manager / GNOME Keyring / KWallet), не в файле настроек.</p>
+          </>
         )}
-        <p className="hint">Пароли хранятся в системном хранилище (Windows Credential Manager / GNOME Keyring / KWallet), не в файле настроек.</p>
 
         <details open={jumpOpen}>
           <summary>Подключение через сервер-посредник{jumpMode !== "none" ? " — включено" : ""}</summary>
@@ -315,13 +314,7 @@ function JumpFields(p: {
           <input type="number" min={1} max={65535} value={jump.port} onChange={(e) => set("port", Number(e.target.value))} />
         </label>
       </div>
-      <div className="segmented">
-        {(["password", "key"] as AuthMethod[]).map((m) => (
-          <button type="button" key={m} className={jump.auth === m ? "on" : ""} onClick={() => set("auth", m)}>
-            {m === "password" ? "Пароль" : "SSH-ключ"}
-          </button>
-        ))}
-      </div>
+      <AuthSwitch value={jump.auth} onChange={(m) => set("auth", m)} />
       {isKey && (
         <label className="field">
           <span>Приватный ключ посредника</span>
@@ -333,22 +326,49 @@ function JumpFields(p: {
           </div>
         </label>
       )}
-      <label className="field">
-        <span>{isKey ? "Passphrase ключа посредника (если есть)" : "Пароль посредника"}</span>
-        <input
-          type="password"
-          value={p.secret}
-          disabled={p.forget}
-          onChange={(e) => p.setSecret(e.target.value)}
-          placeholder={jump.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
-        />
-      </label>
-      {jump.hasSecret && (
-        <label className="check">
-          <input type="checkbox" checked={p.forget} onChange={(e) => p.setForget(e.target.checked)} />
-          Забыть сохранённый {isKey ? "passphrase" : "пароль"} посредника
-        </label>
+      {jump.auth === "agent" ? (
+        <p className="hint">{AGENT_HINT}</p>
+      ) : (
+        <>
+          <label className="field">
+            <span>{isKey ? "Passphrase ключа посредника (если есть)" : "Пароль посредника"}</span>
+            <input
+              type="password"
+              value={p.secret}
+              disabled={p.forget}
+              onChange={(e) => p.setSecret(e.target.value)}
+              placeholder={jump.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
+            />
+          </label>
+          {jump.hasSecret && (
+            <label className="check">
+              <input type="checkbox" checked={p.forget} onChange={(e) => p.setForget(e.target.checked)} />
+              Забыть сохранённый {isKey ? "passphrase" : "пароль"} посредника
+            </label>
+          )}
+        </>
       )}
     </>
+  );
+}
+
+const AGENT_HINT =
+  "Ключи берутся из запущенного SSH-агента (ssh-agent; в Windows — служба OpenSSH Authentication Agent или Pageant). Пароль не нужен — добавьте ключ в агент командой ssh-add.";
+
+const AUTH_LABELS: [AuthMethod, string][] = [
+  ["password", "Пароль"],
+  ["key", "SSH-ключ"],
+  ["agent", "SSH-агент"],
+];
+
+function AuthSwitch({ value, onChange }: { value: AuthMethod; onChange: (m: AuthMethod) => void }) {
+  return (
+    <div className="segmented">
+      {AUTH_LABELS.map(([m, label]) => (
+        <button type="button" key={m} className={value === m ? "on" : ""} onClick={() => onChange(m)}>
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }

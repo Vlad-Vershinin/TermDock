@@ -54,6 +54,8 @@ fn save_server(store: State<Store>, mut server: Server, secret: Option<String>, 
     }
     let previous = store.get(&server.id);
     server.has_secret = previous.as_ref().map(|p| p.has_secret).unwrap_or(false);
+    // The agent holds the keys itself: nothing to keep in the keychain.
+    let secret = if server.auth == store::AuthMethod::Agent { Some(String::new()) } else { secret };
     apply_secret(&server.id, secret.as_deref(), &mut server.has_secret)?;
 
     let jump_id = store::jump_secret_id(&server.id);
@@ -76,6 +78,7 @@ fn save_server(store: State<Store>, mut server: Server, secret: Option<String>, 
                 j.port = 22;
             }
             j.has_secret = had_jump_secret;
+            let jump_secret = if j.auth == store::AuthMethod::Agent { Some(String::new()) } else { jump_secret };
             apply_secret(&jump_id, jump_secret.as_deref(), &mut j.has_secret)?;
         }
         _ => {

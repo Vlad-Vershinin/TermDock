@@ -564,6 +564,10 @@ function Home({
                           <>
                             <IKey size={12} /> ключ
                           </>
+                        ) : s.auth === "agent" ? (
+                          <>
+                            <IKey size={12} /> агент
+                          </>
                         ) : (
                           <>
                             <ILock size={12} /> {s.hasSecret ? "пароль сохранён" : "пароль"}

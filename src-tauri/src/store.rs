@@ -13,6 +13,8 @@ pub enum AuthMethod {
     #[default]
     Password,
     Key,
+    /// Keys from a running ssh-agent (OpenSSH agent / Pageant on Windows).
+    Agent,
 }
 
 /// Jump host (like ssh -J): either a saved server or a host described right here.

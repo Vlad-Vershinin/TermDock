@@ -63,6 +63,8 @@ const STATUS_TEXT: Record<ServerState["status"], string> = {
   error: "ошибка",
 };
 
+const AUTH_TEXT: Record<string, string> = { password: "пароль", key: "ключ", agent: "агент" };
+
 export const MIN_SIDEBAR = 200;
 export const MAX_SIDEBAR = 560;
 
@@ -184,7 +186,7 @@ export function Sidebar(props: Props) {
         onClick={(e) => onConnect(s, e.ctrlKey || e.shiftKey)}
         onContextMenu={(e) => menu(e, s)}
         onPointerDown={(e) => beginDrag(e, () => ({ kind: "server", ids: [s.id] }), s.name)}
-        title={`${s.username}@${s.host}:${s.port}${via ? `\nЧерез: ${via}` : ""}\nКлик — открыть, Ctrl+клик — ещё одна вкладка, ПКМ — действия.\nПеретащите на папку, чтобы переместить.`}
+        title={`${s.username}@${s.host}:${s.port} · ${AUTH_TEXT[s.auth] ?? s.auth}${via ? `\nЧерез: ${via}` : ""}\nКлик — открыть, Ctrl+клик — ещё одна вкладка, ПКМ — действия.\nПеретащите на папку, чтобы переместить.`}
       >
         <span className="server-color" style={{ background: s.color || "#58a6ff" }} />
         <div className="server-text">

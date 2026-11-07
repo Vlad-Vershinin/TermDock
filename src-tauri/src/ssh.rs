@@ -187,12 +187,75 @@ async fn authenticate(handle: &mut Handle<Client>, hop: &Hop) -> Result<(), Stri
                 .map_err(|e| e.to_string())?;
             res.success()
         }
+        AuthMethod::Agent => return agent_auth(handle, &user).await,
     };
     if ok {
         Ok(())
     } else {
         Err("AUTH_FAILED".into())
     }
+}
+
+type Agent = keys::agent::client::AgentClient<Box<dyn keys::agent::client::AgentStream + Send + Unpin>>;
+
+/// Connects to the user's ssh-agent: SSH_AUTH_SOCK on Unix; on Windows the OpenSSH agent pipe,
+/// then Pageant.
+pub async fn connect_agent() -> Result<Agent, String> {
+    #[cfg(unix)]
+    {
+        let sock = std::env::var_os("SSH_AUTH_SOCK").filter(|s| !s.is_empty());
+        let sock = sock.ok_or("SSH-агент не запущен: переменная SSH_AUTH_SOCK не задана")?;
+        match keys::agent::client::AgentClient::connect_uds(&sock).await {
+            Ok(a) => Ok(a.dynamic()),
+            Err(keys::Error::IO(e)) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused) => {
+                Err("SSH-агент не запущен: его сокет (SSH_AUTH_SOCK) не отвечает".into())
+            }
+            Err(e) => Err(format!("Не удалось подключиться к SSH-агенту: {e}")),
+        }
+    }
+    #[cfg(windows)]
+    {
+        use keys::agent::client::AgentClient;
+        if let Ok(a) = AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
+            return Ok(a.dynamic());
+        }
+        match AgentClient::connect_pageant().await {
+            Ok(a) => Ok(a.dynamic()),
+            Err(_) => Err("SSH-агент не запущен: не найдены ни служба OpenSSH Authentication Agent, ни Pageant".into()),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Err("SSH-агент не поддерживается на этой системе".into())
+    }
+}
+
+/// Tries every identity the agent holds until the server accepts one.
+async fn agent_auth(handle: &mut Handle<Client>, user: &str) -> Result<(), String> {
+    use keys::agent::AgentIdentity;
+    let mut agent = connect_agent().await?;
+    let ids = agent
+        .request_identities()
+        .await
+        .map_err(|e| format!("SSH-агент не отвечает: {e}"))?;
+    if ids.is_empty() {
+        return Err("В SSH-агенте нет ключей — добавьте ключ командой ssh-add".into());
+    }
+    let hash = handle.best_supported_rsa_hash().await.map_err(|e| e.to_string())?.flatten();
+    for id in ids {
+        let res = match id {
+            AgentIdentity::PublicKey { key, .. } => handle.authenticate_publickey_with(user, key, hash, &mut agent).await,
+            AgentIdentity::Certificate { certificate, .. } => handle.authenticate_certificate_with(user, certificate, hash, &mut agent).await,
+        };
+        match res {
+            Ok(r) if r.success() => return Ok(()),
+            Ok(_) => {}
+            // The agent may refuse to sign (e.g. a confirm-only key the user declined): try the next one.
+            Err(russh::AgentAuthError::Key(_)) => {}
+            Err(e) => return Err(format!("Ошибка аутентификации через SSH-агент: {e}")),
+        }
+    }
+    Err("Сервер отклонил все ключи из SSH-агента".into())
 }
 
 async fn keyboard_interactive(handle: &mut Handle<Client>, user: &str, password: &str) -> Result<bool, String> {
@@ -268,26 +331,30 @@ async fn open_hop(config: Arc<client::Config>, known_hosts: &std::path::Path, ho
 fn jump_error(hop: &Hop, e: String) -> String {
     let actionable = e == "NEED_SECRET" || e == "AUTH_FAILED" || e.starts_with("HOSTKEY_");
     if actionable {
-        let auth = if hop.auth == AuthMethod::Key { "key" } else { "password" };
+        let auth = match hop.auth {
+            AuthMethod::Key => "key",
+            AuthMethod::Agent => "agent",
+            AuthMethod::Password => "password",
+        };
         format!("JUMP|{}|{}|{auth}|{e}", hop.id, hop.label())
     } else {
         format!("Сервер-посредник {}: {e}", hop.label())
     }
 }
 
-/// Connects (through the jump hosts, if any), authenticates and opens an interactive shell.
-/// Output is streamed to `events`.
-pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<TermEvent>) -> Result<String, String> {
+/// Opens and authenticates every hop. Returns the jump host connections (outermost first)
+/// and the connection to the target server.
+pub async fn open_chain(hops: &[Hop], known_hosts: &std::path::Path) -> Result<(Vec<Handle<Client>>, Handle<Client>), String> {
     let config = Arc::new(client::Config {
         keepalive_interval: Some(Duration::from_secs(30)),
         keepalive_max: 4,
         ..Default::default()
     });
 
-    let last = p.hops.len().checked_sub(1).ok_or("Не указан сервер")?;
-    let mut chain: Vec<Handle<Client>> = Vec::with_capacity(p.hops.len());
-    for (i, hop) in p.hops.iter().enumerate() {
-        match open_hop(config.clone(), &p.known_hosts, hop, chain.last()).await {
+    let last = hops.len().checked_sub(1).ok_or("Не указан сервер")?;
+    let mut chain: Vec<Handle<Client>> = Vec::with_capacity(hops.len());
+    for (i, hop) in hops.iter().enumerate() {
+        match open_hop(config.clone(), known_hosts, hop, chain.last()).await {
             Ok(h) => chain.push(h),
             Err(e) => {
                 for h in chain.iter().rev() {
@@ -298,7 +365,13 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<Term
         }
     }
     let handle = chain.pop().unwrap();
-    let jumps = chain;
+    Ok((chain, handle))
+}
+
+/// Connects (through the jump hosts, if any), authenticates and opens an interactive shell.
+/// Output is streamed to `events`.
+pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<TermEvent>) -> Result<String, String> {
+    let (jumps, handle) = open_chain(&p.hops, &p.known_hosts).await?;
 
     let channel = handle.channel_open_session().await.map_err(|e| e.to_string())?;
     channel
@@ -427,3 +500,7 @@ impl SshSession {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "ssh_tests.rs"]
+pub(crate) mod tests;
