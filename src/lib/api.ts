@@ -143,12 +143,16 @@ export const api = {
   localRemove: (path: string) => invoke<void>("local_remove", { path }),
   localRename: (from: string, to: string) => invoke<void>("local_rename", { from, to }),
 
-  localReadText: (path: string) => invoke<string>("local_read_text", { path }),
-  localWriteText: (path: string, content: string) => invoke<void>("local_write_text", { path, content }),
+  localReadText: (path: string, opts: ReadTextOptions = {}) =>
+    invoke<TextFile>("local_read_text", { path, encoding: opts.encoding ?? null, allowLarge: opts.allowLarge ?? false }),
+  localWriteText: (path: string, content: string, enc: TextEncoding) =>
+    invoke<void>("local_write_text", { path, content, encoding: enc.encoding, bom: enc.bom }),
   localCreateFile: (path: string) => invoke<void>("local_create_file", { path }),
 
-  remoteReadText: (sessionId: string, path: string) => invoke<string>("remote_read_text", { sessionId, path }),
-  remoteWriteText: (sessionId: string, path: string, content: string) => invoke<void>("remote_write_text", { sessionId, path, content }),
+  remoteReadText: (sessionId: string, path: string, opts: ReadTextOptions = {}) =>
+    invoke<TextFile>("remote_read_text", { sessionId, path, encoding: opts.encoding ?? null, allowLarge: opts.allowLarge ?? false }),
+  remoteWriteText: (sessionId: string, path: string, content: string, enc: TextEncoding) =>
+    invoke<void>("remote_write_text", { sessionId, path, content, encoding: enc.encoding, bom: enc.bom }),
   remoteCreateFile: (sessionId: string, path: string) => invoke<void>("remote_create_file", { sessionId, path }),
 
   remoteHome: (sessionId: string) => invoke<string>("remote_home", { sessionId }),
@@ -163,6 +167,26 @@ export const api = {
     invoke<void>("download", { sessionId, transferId, remotePaths, localDir }),
   cancelTransfer: (transferId: string) => invoke<void>("cancel_transfer", { transferId }),
 };
+
+/** Text encoding as the backend names it ("UTF-8", "UTF-16LE", "windows-1251", ...), plus the BOM flag. */
+export interface TextEncoding {
+  encoding: string;
+  bom: boolean;
+}
+
+/** A text file decoded for the editor. */
+export interface TextFile extends TextEncoding {
+  text: string;
+  /** Some bytes didn't fit the encoding and were replaced with U+FFFD. */
+  lossy: boolean;
+}
+
+export interface ReadTextOptions {
+  /** Re-decode in this encoding instead of auto-detecting. */
+  encoding?: string;
+  /** Allow files over 5 MB (up to 100 MB); otherwise the read fails with `TOO_BIG|<bytes>`. */
+  allowLarge?: boolean;
+}
 
 export function errorText(e: unknown): string {
   return typeof e === "string" ? e : e instanceof Error ? e.message : JSON.stringify(e);

@@ -12,6 +12,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::textcodec::{self, Decoded};
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
@@ -367,45 +369,59 @@ pub async fn download(app: AppHandle, sftp: Arc<SftpSession>, id: String, cancel
 
 // ---------- text editing ----------
 
-/// Files larger than this are not opened in the built-in editor.
+/// Files larger than this open only after the user confirms (UI gets `TOO_BIG|<bytes>`).
 const MAX_EDIT: u64 = 5 * 1024 * 1024;
+/// Hard limit for the built-in editor.
+const MAX_EDIT_LARGE: u64 = 100 * 1024 * 1024;
 
-fn decode_text(path: &str, bytes: Vec<u8>) -> Result<String, String> {
-    if bytes.iter().take(8192).any(|&b| b == 0) {
-        return Err(format!("{path}: похоже на двоичный файл — встроенный редактор открывает только текст"));
-    }
-    String::from_utf8(bytes).map_err(|_| format!("{path}: файл не в кодировке UTF-8"))
-}
-
-fn too_big(path: &str, size: u64) -> Result<(), String> {
-    if size > MAX_EDIT {
-        Err(format!("{path}: файл слишком большой для редактора ({} МБ, максимум 5 МБ)", size / 1024 / 1024))
+fn check_size(path: &str, size: u64, allow_large: bool) -> Result<(), String> {
+    if size > MAX_EDIT_LARGE {
+        Err(format!("{path}: файл слишком большой для встроенного редактора ({} МБ, максимум 100 МБ)", size / 1024 / 1024))
+    } else if size > MAX_EDIT && !allow_large {
+        Err(format!("TOO_BIG|{size}"))
     } else {
         Ok(())
     }
 }
 
-pub async fn read_local_text(path: &str) -> Result<String, String> {
-    let meta = tokio::fs::metadata(path).await.map_err(|e| format!("{path}: {e}"))?;
-    too_big(path, meta.len())?;
-    let bytes = tokio::fs::read(path).await.map_err(|e| format!("{path}: {e}"))?;
-    decode_text(path, bytes)
+fn decode_text(path: &str, bytes: &[u8], encoding: Option<&str>) -> Result<Decoded, String> {
+    textcodec::decode(bytes, encoding).map_err(|e| format!("{path}: {e}"))
 }
 
-pub async fn read_remote_text(sftp: &SftpSession, path: &str) -> Result<String, String> {
+pub async fn read_local_text(path: &str, encoding: Option<&str>, allow_large: bool) -> Result<Decoded, String> {
+    let meta = tokio::fs::metadata(path).await.map_err(|e| format!("{path}: {e}"))?;
+    check_size(path, meta.len(), allow_large)?;
+    let bytes = tokio::fs::read(path).await.map_err(|e| format!("{path}: {e}"))?;
+    decode_text(path, &bytes, encoding)
+}
+
+pub async fn read_remote_text(sftp: &SftpSession, path: &str, encoding: Option<&str>, allow_large: bool) -> Result<Decoded, String> {
     let meta = sftp.metadata(path).await.map_err(|e| format!("{path}: {e}"))?;
-    too_big(path, meta.size.unwrap_or(0))?;
+    check_size(path, meta.size.unwrap_or(0), allow_large)?;
     let bytes = sftp.read(path).await.map_err(|e| format!("{path}: {e}"))?;
-    decode_text(path, bytes)
+    // Size may be unknown (or the file grew) — check what was actually read.
+    check_size(path, bytes.len() as u64, allow_large)?;
+    decode_text(path, &bytes, encoding)
+}
+
+fn encode_text(path: &str, content: &str, encoding: &str, bom: bool) -> Result<Vec<u8>, String> {
+    textcodec::encode(content, encoding, bom).map_err(|e| format!("{path}: {e}"))
+}
+
+/// Encodes first, so an unrepresentable character never truncates the file.
+pub async fn write_local_text(path: &str, content: &str, encoding: &str, bom: bool) -> Result<(), String> {
+    let bytes = encode_text(path, content, encoding, bom)?;
+    tokio::fs::write(path, bytes).await.map_err(|e| format!("{path}: {e}"))
 }
 
 /// Overwrites (truncates) the file, keeping its permissions.
-pub async fn write_remote_text(sftp: &SftpSession, path: &str, content: &str) -> Result<(), String> {
+pub async fn write_remote_text(sftp: &SftpSession, path: &str, content: &str, encoding: &str, bom: bool) -> Result<(), String> {
+    let bytes = encode_text(path, content, encoding, bom)?;
     let mut f = sftp
         .open_with_flags(path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
         .await
         .map_err(|e| format!("{path}: {e}"))?;
-    f.write_all(content.as_bytes()).await.map_err(|e| format!("{path}: {e}"))?;
+    f.write_all(&bytes).await.map_err(|e| format!("{path}: {e}"))?;
     f.shutdown().await.map_err(|e| format!("{path}: {e}"))
 }
 

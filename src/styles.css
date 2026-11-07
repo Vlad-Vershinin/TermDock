@@ -338,12 +338,13 @@ td.mode { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
 .editor-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; font-size: 12px; }
 .dirty-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
 .editor-body { flex: 1; display: flex; min-height: 0; position: relative; }
-.editor-gutter, .editor-area { font-family: "JetBrains Mono", "Cascadia Mono", "Fira Code", Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; line-height: 20px; }
-.editor-gutter { flex: none; min-width: 48px; padding: 8px 10px 30px 8px; text-align: right; color: #5c6066; overflow: hidden; white-space: pre; background: var(--bg); border-right: 1px solid var(--line); }
-.editor-area { flex: 1; min-width: 0; resize: none; border: none; outline: none; padding: 8px 12px; background: var(--bg); color: var(--text); white-space: pre; overflow: auto; tab-size: 4; caret-color: #fff; }
-.editor-area.wrap { white-space: pre-wrap; word-break: break-all; }
-.editor-area::selection { background: #214283; }
+.editor-cm { flex: 1; min-width: 0; display: flex; }
+.editor-cm[hidden] { display: none; }
+.editor-cm .cm-editor { flex: 1; min-width: 0; }
+.editor-cm .cm-content, .editor-cm .cm-panels { user-select: text; -webkit-user-select: text; }
 .editor-foot { display: flex; align-items: center; gap: 16px; height: 26px; padding: 0 14px; background: var(--bg-1); border-top: 1px solid var(--line); font-size: 11px; color: #b4b8bf; flex: none; }
+.editor-foot .foot-btn { height: 20px; padding: 0 6px; margin: 0 -6px; border: none; border-radius: 4px; background: none; color: inherit; font-size: 11px; cursor: pointer; }
+.editor-foot .foot-btn:hover { background: var(--bg-3); }
 .check.small { font-size: 12px; color: var(--muted); }
 
 /* ---------- modal ---------- */
