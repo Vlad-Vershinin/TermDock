@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { api, errorText, Server } from "./lib/api";
 import { clearHover, dropAt, hoverAt } from "./lib/dnd";
+import { isDraggingOut, isOwnDragPath } from "./lib/dragout";
 import { TransfersPanel, TransfersProvider, useTransfers } from "./lib/transfers";
 import { MenuItem, UiProvider, useUi } from "./lib/ui";
 import { ServerDialog } from "./components/ServerDialog";
@@ -74,12 +75,17 @@ function Main() {
   useEffect(() => {
     const un = getCurrentWebview().onDragDropEvent((ev) => {
       const p = ev.payload;
-      if (p.type === "leave") return clearHover();
+      // Our own drag-out passing over / dropped back onto the window: ignore, no re-upload.
+      if (p.type === "leave" || isDraggingOut()) return clearHover();
       const dpr = window.devicePixelRatio || 1;
       const x = p.position.x / dpr;
       const y = p.position.y / dpr;
       if (p.type === "over" || p.type === "enter") hoverAt(x, y, { kind: "os", paths: [] });
-      else if (p.type === "drop") dropAt(x, y, { kind: "os", paths: p.paths });
+      else if (p.type === "drop") {
+        const paths = p.paths.filter((f) => !isOwnDragPath(f));
+        if (paths.length) dropAt(x, y, { kind: "os", paths });
+        else clearHover();
+      }
     });
     return () => {
       un.then((f) => f());

@@ -55,8 +55,16 @@ function accepts(zone: HTMLElement, source: DragSource) {
   return accept.includes(source.kind);
 }
 
-/** Call from a row's onPointerDown. Starts a drag after the pointer moves a few pixels. */
-export function beginDrag(e: React.PointerEvent, getSource: () => DragSource, label: string) {
+/** Pointer at (or past) the window border. While the button is held the webview keeps the
+ * mouse captured, so moves past the border are still reported and a small margin suffices. */
+function atWindowEdge(ev: PointerEvent, margin: number) {
+  return ev.clientX <= margin || ev.clientY <= margin || ev.clientX >= window.innerWidth - margin || ev.clientY >= window.innerHeight - margin;
+}
+
+/** Call from a row's onPointerDown. Starts a drag after the pointer moves a few pixels.
+ * With `onLeaveWindow`, a drag reaching the window border is cancelled and handed over to it
+ * (used to start a native drag into the OS file manager). */
+export function beginDrag(e: React.PointerEvent, getSource: () => DragSource, label: string, onLeaveWindow?: (source: DragSource) => void) {
   if (e.button !== 0) return;
   const startX = e.clientX;
   const startY = e.clientY;
@@ -73,12 +81,27 @@ export function beginDrag(e: React.PointerEvent, getSource: () => DragSource, la
       document.body.appendChild(ghost);
       document.body.classList.add("dragging");
     }
+    if (onLeaveWindow && atWindowEdge(ev, 2)) return leave();
     ghost.style.transform = `translate(${ev.clientX + 14}px, ${ev.clientY + 10}px)`;
     hoverAt(ev.clientX, ev.clientY, source);
+  };
+  // Fallback when no move past the border is reported: the pointer left the document near an edge.
+  const out = (ev: PointerEvent) => {
+    if (!ev.relatedTarget && atWindowEdge(ev, 8)) leave();
+  };
+  const leave = () => {
+    const s = source;
+    if (!ghost || !s || !onLeaveWindow) return;
+    // Cancel the internal drag like Escape does, then hand over.
+    source = null;
+    clearHover();
+    up(new PointerEvent("pointerup"));
+    onLeaveWindow(s);
   };
   const up = (ev: PointerEvent) => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointerout", out);
     window.removeEventListener("keydown", esc);
     if (ghost) {
       ghost.remove();
@@ -98,5 +121,6 @@ export function beginDrag(e: React.PointerEvent, getSource: () => DragSource, la
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
+  if (onLeaveWindow) window.addEventListener("pointerout", out);
   window.addEventListener("keydown", esc);
 }
