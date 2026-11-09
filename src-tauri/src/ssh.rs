@@ -10,7 +10,7 @@ use russh::keys::{self, HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCe
 use russh::{ChannelMsg, ChannelWriteHalf};
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tokio::sync::mpsc;
 
 use crate::forward::{Forwards, RemoteForwards};
@@ -102,11 +102,13 @@ fn remove_known_host(path: &PathBuf, host: &str, port: u16) {
     let _ = std::fs::write(path, kept.join("\n") + "\n");
 }
 
-#[derive(Serialize, Clone)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum TermEvent {
-    Data { data: Vec<u8> },
-    Closed { reason: String },
+/// Terminal output goes to the UI as raw bytes (an ArrayBuffer there: a JSON number array is ~4x
+/// larger and slow to parse, which made a flooding server lag the whole terminal); the end of the
+/// session is a JSON `{type: "closed", reason}`.
+pub type TermChannel = Channel<InvokeResponseBody>;
+
+fn closed_event(reason: &str) -> InvokeResponseBody {
+    InvokeResponseBody::Json(serde_json::json!({ "type": "closed", "reason": reason }).to_string())
 }
 
 #[derive(Default, Serialize)]
@@ -410,7 +412,7 @@ pub async fn open_chain(hops: &[Hop], known_hosts: &std::path::Path) -> Result<C
 
 /// Connects (through the jump hosts, if any), authenticates and opens an interactive shell.
 /// Output is streamed to `events`.
-pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<TermEvent>) -> Result<String, String> {
+pub async fn connect(sessions: &Sessions, p: ConnectParams, events: TermChannel) -> Result<String, String> {
     let Chain { jumps, handle, remote } = open_chain(&p.hops, &p.known_hosts).await?;
 
     let channel = handle.channel_open_session().await.map_err(|e| e.to_string())?;
@@ -441,20 +443,41 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: Channel<Term
     sessions.insert(id.clone(), session);
 
     tokio::spawn(async move {
+        // Chunks that arrive back to back are merged: one IPC message per few ms instead of one per
+        // SSH packet keeps the UI responsive while a busy server floods the terminal.
+        const MAX_BATCH: usize = 64 * 1024;
         let mut reason = "Соединение закрыто".to_string();
-        while let Some(msg) = reader.wait().await {
-            match msg {
-                ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
-                    if events.send(TermEvent::Data { data: data.to_vec() }).is_err() {
-                        break;
+        let mut buf: Vec<u8> = Vec::new();
+        'outer: loop {
+            let msg = if buf.is_empty() {
+                reader.wait().await
+            } else {
+                match tokio::time::timeout(Duration::from_millis(4), reader.wait()).await {
+                    Ok(m) => m,
+                    Err(_) => {
+                        if events.send(InvokeResponseBody::Raw(std::mem::take(&mut buf))).is_err() {
+                            break 'outer;
+                        }
+                        continue;
                     }
                 }
-                ChannelMsg::ExitStatus { exit_status } => reason = format!("Сессия завершена (код {exit_status})"),
-                ChannelMsg::Close => break,
-                _ => {}
+            };
+            match msg {
+                Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+                    buf.extend_from_slice(&data);
+                    if buf.len() >= MAX_BATCH && events.send(InvokeResponseBody::Raw(std::mem::take(&mut buf))).is_err() {
+                        break 'outer;
+                    }
+                }
+                Some(ChannelMsg::ExitStatus { exit_status }) => reason = format!("Сессия завершена (код {exit_status})"),
+                Some(ChannelMsg::Close) | None => break,
+                Some(_) => {}
             }
         }
-        let _ = events.send(TermEvent::Closed { reason });
+        if !buf.is_empty() {
+            let _ = events.send(InvokeResponseBody::Raw(buf));
+        }
+        let _ = events.send(closed_event(&reason));
     });
 
     Ok(id)

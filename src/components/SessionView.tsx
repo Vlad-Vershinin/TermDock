@@ -17,6 +17,8 @@ import { commandBlock } from "../lib/scripts";
 import { Telemetry } from "./Telemetry";
 import { Ports } from "./Ports";
 
+const MOUSE_OFF = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l";
+
 export type SessionStatus = "connecting" | "connected" | "closed" | "error";
 
 interface Props {
@@ -103,12 +105,12 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
             if (disposed.current) return;
             if (e.type === "data") {
               lastOutput.current = Date.now();
-              t.write(new Uint8Array(e.data));
+              t.write(e.data);
             }
             else {
               if (id) api.disconnect(id).catch(() => {});
               else closedEarly = true;
-              t.write(`\r\n\x1b[33m${e.reason}. Нажмите Enter, чтобы переподключиться.\x1b[0m\r\n`);
+              t.write(`${MOUSE_OFF}\r\n\x1b[33m${e.reason}. Нажмите Enter, чтобы переподключиться.\x1b[0m\r\n`);
               if (id && sessionRef.current === id) {
                 sessionRef.current = null;
                 setSessionId(null);
@@ -261,6 +263,10 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
 
     const enc = new TextEncoder();
     const send = (s: string) => sessionRef.current && api.write(sessionRef.current, enc.encode(s)).catch(() => {});
+
+    // A TUI killed mid-run (Ctrl+C on a stuck server, dropped link) can leave mouse reporting on, and
+    // every mouse move then lands in the shell as text. Back at the normal screen it is always stale.
+    t.buffer.onBufferChange((b) => b.type === "normal" && t.write(MOUSE_OFF));
 
     t.onData((d) => {
       if (!sessionRef.current) {

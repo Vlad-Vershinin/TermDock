@@ -83,7 +83,8 @@ export interface Entry {
   mode?: number | null;
 }
 
-export type TermEvent = { type: "data"; data: number[] } | { type: "closed"; reason: string };
+/** Output arrives as raw bytes; the end of the session as a JSON object. */
+export type TermEvent = { type: "data"; data: Uint8Array } | { type: "closed"; reason: string };
 
 export interface Progress {
   id: string;
@@ -157,8 +158,13 @@ export const api = {
     rows: number;
     onEvent: (e: TermEvent) => void;
   }) => {
-    const events = new Channel<TermEvent>();
-    events.onmessage = args.onEvent;
+    const events = new Channel<ArrayBuffer | Uint8Array | number[] | { type: "closed"; reason: string }>();
+    events.onmessage = (m) => {
+      if (m instanceof ArrayBuffer) args.onEvent({ type: "data", data: new Uint8Array(m) });
+      else if (m instanceof Uint8Array) args.onEvent({ type: "data", data: m });
+      else if (Array.isArray(m)) args.onEvent({ type: "data", data: Uint8Array.from(m) });
+      else args.onEvent(m);
+    };
     return invoke<string>("ssh_connect", {
       serverId: args.serverId,
       secrets: args.secrets,
