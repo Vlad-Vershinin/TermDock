@@ -3,7 +3,7 @@
 # Builds TermDock from the local source tree (this PKGBUILD lives in packaging/arch).
 # Usage:  cd packaging/arch && makepkg -si
 pkgname=termdock
-pkgver=1.2.1
+pkgver=1.3.0
 pkgrel=1
 pkgdesc="SSH terminal and file manager with drag & drop (Tauri)"
 arch=('x86_64')
