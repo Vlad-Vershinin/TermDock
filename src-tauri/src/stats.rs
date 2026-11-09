@@ -13,12 +13,12 @@ echo @@now; date +%s; \
 echo @@vmstat; vm_stat; \
 echo @@pscpu; ps -A -o %cpu; \
 echo @@os; echo \"$(sw_vers -productName) $(sw_vers -productVersion)\";; \
-FreeBSD|DragonFly) echo @@sysctl; for n in hw.physmem hw.ncpu vm.loadavg kern.boottime kern.cp_time hw.pagesize \
+FreeBSD|DragonFly) echo @@sysctl; for n in hw.physmem hw.ncpu vm.loadavg kern.boottime kern.cp_time kern.cp_times hw.pagesize \
 vm.stats.vm.v_free_count vm.stats.vm.v_inactive_count vm.stats.vm.v_cache_count; do v=$(sysctl -n $n) && echo \"$n: $v\"; done; \
 echo @@now; date +%s; \
 echo @@swapinfo; swapinfo -k; \
 echo @@os; echo \"$k $(freebsd-version || uname -r)\";; \
-*) echo @@stat; head -n1 /proc/stat; \
+*) echo @@stat; grep ^cpu /proc/stat; \
 echo @@mem; cat /proc/meminfo; \
 echo @@load; cat /proc/loadavg; \
 echo @@up; cat /proc/uptime; \
@@ -49,6 +49,10 @@ $p = @(Get-CimInstance Win32_Processor)
 "$(($p | Measure-Object -Property LoadPercentage -Average).Average)"
 '@@ncpu'
 "$(($p | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)"
+# Names are "3" or "<group>,<index>" on machines with several processor groups.
+'@@wincores'
+Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor | Where-Object { $_.Name -notlike '*_Total' } |
+  Sort-Object { $n = $_.Name -split ','; [int]$n[0] * 10000 + [int]$n[-1] } | ForEach-Object { "$($_.PercentProcessorTime)" }
 '@@windisk'
 Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { "$($_.DeviceID) $($_.Size) $($_.FreeSpace)" }
 '@@host'
@@ -86,20 +90,32 @@ pub struct State {
     pub flavour: Option<Flavour>,
     /// Previous CPU counters (idle, total) for usage deltas.
     pub cpu_prev: Option<(u64, u64)>,
+    /// Same, per core.
+    pub cores_prev: Vec<(u64, u64)>,
 }
 
 impl State {
     /// Fills `cpu` from the counter delta against the previous sample (Linux / FreeBSD).
     pub fn apply_cpu(&mut self, s: &mut Stats) {
-        let Some((idle, total)) = s.cpu_sample else { return };
-        if let Some((pi, pt)) = self.cpu_prev {
-            let (di, dt) = (idle.saturating_sub(pi), total.saturating_sub(pt));
-            if dt > 0 {
-                s.cpu = Some(100.0 * (1.0 - di as f32 / dt as f32));
+        if !s.core_samples.is_empty() {
+            // A changed core count (hotplug) makes the old counters meaningless.
+            if self.cores_prev.len() == s.core_samples.len() {
+                s.cores = s.core_samples.iter().zip(&self.cores_prev).map(|(&c, &p)| usage(p, c).unwrap_or(0.0)).collect();
             }
+            self.cores_prev = std::mem::take(&mut s.core_samples);
         }
-        self.cpu_prev = Some((idle, total));
+        let Some(sample) = s.cpu_sample else { return };
+        if let Some(prev) = self.cpu_prev {
+            s.cpu = usage(prev, sample);
+        }
+        self.cpu_prev = Some(sample);
     }
+}
+
+/// Busy percent between two (idle, total) counter samples.
+fn usage((pi, pt): (u64, u64), (idle, total): (u64, u64)) -> Option<f32> {
+    let (di, dt) = (idle.saturating_sub(pi), total.saturating_sub(pt));
+    (dt > 0).then(|| (100.0 * (1.0 - di as f32 / dt as f32)).clamp(0.0, 100.0))
 }
 
 #[derive(Serialize, Clone)]
@@ -118,6 +134,8 @@ pub struct Stats {
     /// Percent. Delta-based systems (Linux, FreeBSD) have None on the first sample.
     pub cpu: Option<f32>,
     pub cpus: Option<u32>,
+    /// Percent per logical core; empty when unknown (macOS, first sample on Linux / FreeBSD).
+    pub cores: Vec<f32>,
     /// None on Windows.
     pub load: Option<[f32; 3]>,
     /// Bytes.
@@ -132,6 +150,8 @@ pub struct Stats {
     pub hostname: Option<String>,
     #[serde(skip)]
     pub cpu_sample: Option<(u64, u64)>,
+    #[serde(skip)]
+    pub core_samples: Vec<(u64, u64)>,
 }
 
 impl Stats {
@@ -196,6 +216,7 @@ pub fn parse(text: &str) -> Stats {
                 "winmem" => "winmem",
                 "winswap" => "winswap",
                 "wincpu" => "wincpu",
+                "wincores" => "wincores",
                 "windisk" => "windisk",
                 _ => "",
             };
@@ -206,11 +227,18 @@ pub fn parse(text: &str) -> Stats {
             continue;
         }
         match section {
-            "stat" if line.starts_with("cpu ") => {
-                let v: Vec<u64> = line.split_whitespace().skip(1).take(8).filter_map(|x| x.parse().ok()).collect();
+            // "cpu  user nice system idle iowait irq softirq steal …", then one "cpuN …" per core.
+            "stat" if line.starts_with("cpu") => {
+                let mut it = line.split_whitespace();
+                let name = it.next().unwrap_or("");
+                let v: Vec<u64> = it.take(8).filter_map(|x| x.parse().ok()).collect();
                 if v.len() >= 4 {
-                    let idle = v[3] + v.get(4).copied().unwrap_or(0);
-                    s.cpu_sample = Some((idle, v.iter().sum()));
+                    let sample = (v[3] + v.get(4).copied().unwrap_or(0), v.iter().sum());
+                    if name == "cpu" {
+                        s.cpu_sample = Some(sample);
+                    } else if name[3..].parse::<u32>().is_ok() {
+                        s.core_samples.push(sample);
+                    }
                 }
             }
             "mem" => {
@@ -281,6 +309,11 @@ pub fn parse(text: &str) -> Stats {
                 }
             }
             "wincpu" => s.cpu = line.replace(',', ".").parse::<f32>().ok(),
+            "wincores" => {
+                if let Ok(v) = line.replace(',', ".").parse::<f32>() {
+                    s.cores.push(v.clamp(0.0, 100.0));
+                }
+            }
             // DeviceID Size FreeSpace (bytes)
             "windisk" => {
                 let c: Vec<&str> = line.split_whitespace().collect();
@@ -411,6 +444,11 @@ fn finish_freebsd(s: &mut Stats, sysctl: &HashMap<String, String>) {
             s.cpu_sample = Some((v[4], v.iter().sum()));
         }
     }
+    // kern.cp_times: the same five counters for each CPU in turn.
+    if let Some(v) = sysctl.get("kern.cp_times") {
+        let v: Vec<u64> = v.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        s.core_samples = v.chunks_exact(5).map(|c| (c[4], c.iter().sum())).collect();
+    }
 }
 
 #[cfg(test)]
@@ -419,10 +457,12 @@ mod tests {
 
     #[test]
     fn parses_linux_output() {
-        let text = "@@stat\ncpu  100 0 50 800 50 0 0 0 0 0\n@@mem\nMemTotal:       2000 kB\nMemFree:         500 kB\nMemAvailable:   1500 kB\nSwapTotal:      1000 kB\nSwapFree:        750 kB\n@@load\n0.50 0.25 0.10 1/100 1234\n@@up\n3600.12 7000.00\n@@ncpu\n4\n@@df\nFilesystem     1024-blocks    Used Available Capacity Mounted on\nudev               1000       0      1000       0% /dev\n/dev/sda1         10000    4000      6000      40% /\n/dev/sdb1         20000    1000     19000       5% /mnt/my data\n/dev/loop0          100     100         0     100% /snap/core\n@@os\nUbuntu 24.04 LTS\n@@host\nweb-1\n@@end\n";
+        let text = "@@stat\ncpu  100 0 50 800 50 0 0 0 0 0\ncpu0 60 0 30 380 30 0 0 0 0 0\ncpu1 40 0 20 420 20 0 0 0 0 0\n@@mem\nMemTotal:       2000 kB\nMemFree:         500 kB\nMemAvailable:   1500 kB\nSwapTotal:      1000 kB\nSwapFree:        750 kB\n@@load\n0.50 0.25 0.10 1/100 1234\n@@up\n3600.12 7000.00\n@@ncpu\n4\n@@df\nFilesystem     1024-blocks    Used Available Capacity Mounted on\nudev               1000       0      1000       0% /dev\n/dev/sda1         10000    4000      6000      40% /\n/dev/sdb1         20000    1000     19000       5% /mnt/my data\n/dev/loop0          100     100         0     100% /snap/core\n@@os\nUbuntu 24.04 LTS\n@@host\nweb-1\n@@end\n";
         for text in [text.to_string(), format!("@@os-kind Linux\n{text}")] {
             let s = parse(&text);
             assert_eq!(s.cpu_sample, Some((850, 1000)));
+            assert_eq!(s.core_samples, [(410, 500), (440, 500)]);
+            assert!(s.cores.is_empty());
             assert_eq!(s.mem_total, 2000 * 1024);
             assert_eq!(s.mem_used, 500 * 1024);
             assert_eq!(s.swap_used, 250 * 1024);
@@ -434,6 +474,45 @@ mod tests {
             assert_eq!(s.os.as_deref(), Some("Ubuntu 24.04 LTS"));
             assert_eq!(s.hostname.as_deref(), Some("web-1"));
         }
+    }
+
+    #[test]
+    fn linux_per_core_deltas() {
+        // Realistic /proc/stat head (4 cores, 10 columns incl. guest).
+        let first = "@@stat
+cpu  4705 356 584 3699 23 23 0 0 0 0
+cpu0 1393 280 141 899 4 9 0 0 0 0
+cpu1 1132 33 178 950 8 5 0 0 0 0
+cpu2 1103 22 132 928 5 4 0 0 0 0
+cpu3 1077 21 133 922 6 5 0 0 0 0
+intr 114930548 113199788 3 0 5 263 0 4 [...]
+ctxt 1990473
+@@mem
+MemTotal: 1000 kB
+";
+        let second = "@@stat
+cpu  4905 356 684 3899 23 23 0 0 0 0
+cpu0 1493 280 141 899 4 9 0 0 0 0
+cpu1 1132 33 178 1050 8 5 0 0 0 0
+cpu2 1153 22 182 928 5 4 0 0 0 0
+cpu3 1127 21 183 1022 6 5 0 0 0 0
+@@mem
+MemTotal: 1000 kB
+";
+        let mut st = State::default();
+        let mut s1 = parse(first);
+        assert_eq!(s1.core_samples.len(), 4);
+        st.apply_cpu(&mut s1);
+        assert!(s1.cores.is_empty());
+        let mut s2 = parse(second);
+        st.apply_cpu(&mut s2);
+        assert!((s2.cpu.unwrap() - 60.0).abs() < 1e-3);
+        assert_eq!(s2.cores, [100.0, 0.0, 100.0, 50.0]);
+        // A core went offline: no per-core values for this sample, fresh baseline for the next.
+        let mut s3 = parse(&second.replace("cpu3 1127 21 183 1022 6 5 0 0 0 0\n", ""));
+        st.apply_cpu(&mut s3);
+        assert!(s3.cores.is_empty());
+        assert_eq!(st.cores_prev.len(), 3);
     }
 
     #[test]
@@ -501,6 +580,7 @@ mbp.local
         assert_eq!(s.cpus, Some(8));
         assert_eq!(s.cpu, Some(156.0 / 8.0));
         assert_eq!(s.cpu_sample, None);
+        assert!(s.cores.is_empty() && s.core_samples.is_empty());
         assert_eq!(s.load, Some([1.52, 1.71, 1.80]));
         assert_eq!(s.uptime, Some(90000));
         assert_eq!(s.swap_total, 2048 << 20);
@@ -523,6 +603,7 @@ hw.ncpu: 2
 vm.loadavg: { 0.10 0.20 0.30 }
 kern.boottime: { sec = 1700000000, usec = 5 } Tue Nov 14 22:13:20 2023
 kern.cp_time: 1000 10 500 90 8400
+kern.cp_times: 600 5 300 50 4045 400 5 200 40 4355
 hw.pagesize: 4096
 vm.stats.vm.v_free_count: 500000
 vm.stats.vm.v_inactive_count: 100000
@@ -551,6 +632,7 @@ bsd1
         assert_eq!(s.mem_total, 4294967296);
         assert_eq!(s.mem_used, 4294967296 - 600000 * 4096);
         assert_eq!(s.cpu_sample, Some((8400, 10000)));
+        assert_eq!(s.core_samples, [(4045, 5000), (4355, 5000)]);
         assert_eq!(s.cpu, None);
         assert_eq!(s.cpus, Some(2));
         assert_eq!(s.load, Some([0.10, 0.20, 0.30]));
@@ -565,14 +647,20 @@ bsd1
         let mut s1 = parse(text);
         st.apply_cpu(&mut s1);
         assert_eq!(s1.cpu, None);
-        let mut s2 = parse(&text.replace("1000 10 500 90 8400", "1100 10 550 90 8650"));
+        assert!(s1.cores.is_empty());
+        let mut s2 = parse(
+            &text
+                .replace("1000 10 500 90 8400", "1100 10 550 90 8650")
+                .replace("600 5 300 50 4045 400 5 200 40 4355", "700 5 350 50 4095 400 5 200 40 4555"),
+        );
         st.apply_cpu(&mut s2);
         assert_eq!(s2.cpu, Some(37.5));
+        assert_eq!(s2.cores, [75.0, 0.0]);
     }
 
     #[test]
     fn parses_windows_output() {
-        let text = "\u{feff}@@os-kind windows\r\n@@winmem\r\n8388608 2097152\r\n@@winswap\r\n1280 300\r\n@@up\r\n86400\r\n@@os\r\nMicrosoft Windows Server 2022 Standard 10.0.20348\r\n@@wincpu\r\n12.5\r\n@@ncpu\r\n4\r\n@@windisk\r\nD: 107374182400 53687091200\r\nC: 136365211648 36365211648\r\n@@host\r\nWIN-SRV01\r\n@@end\r\n";
+        let text = "\u{feff}@@os-kind windows\r\n@@winmem\r\n8388608 2097152\r\n@@winswap\r\n1280 300\r\n@@up\r\n86400\r\n@@os\r\nMicrosoft Windows Server 2022 Standard 10.0.20348\r\n@@wincpu\r\n12.5\r\n@@ncpu\r\n4\r\n@@wincores\r\n12\r\n0\r\n37\r\n100\r\n@@windisk\r\nD: 107374182400 53687091200\r\nC: 136365211648 36365211648\r\n@@host\r\nWIN-SRV01\r\n@@end\r\n";
         let s = parse(text);
         assert!(s.is_valid());
         assert_eq!(s.mem_total, 8388608 * 1024);
@@ -582,6 +670,7 @@ bsd1
         assert_eq!(s.uptime, Some(86400));
         assert_eq!(s.cpu, Some(12.5));
         assert_eq!(s.cpus, Some(4));
+        assert_eq!(s.cores, [12.0, 0.0, 37.0, 100.0]);
         assert_eq!(s.load, None);
         assert_eq!(s.disks[0].mount, "C:");
         assert_eq!(s.disks[0].used, 100000000000);

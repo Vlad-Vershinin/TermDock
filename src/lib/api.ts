@@ -118,6 +118,8 @@ export interface Disk {
 export interface Stats {
   cpu?: number | null;
   cpus?: number | null;
+  /** Percent per logical core; empty when unknown. */
+  cores?: number[];
   load?: [number, number, number] | null;
   memTotal: number;
   memUsed: number;
