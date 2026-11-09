@@ -129,7 +129,7 @@ Open two servers in one tab or a second connection to the same server - for exam
 
 ### 📊 Server load
 
-Above the terminal you can always see the loading of the **processor**, the occupied **memory** and the space on the **disk** - green, yellow or red. Clicking on the indicator will show details: all disks, swap, operating time, system version. The data is collected separately and nothing is printed to the terminal. Works for servers on **Linux, macOS, FreeBSD and Windows** (with OpenSSH).
+Above the terminal you can always see the loading of the **processor**, the occupied **memory** and the space on the **disk** - green, yellow or red. Clicking on the indicator will show details: **load of each CPU core**, all disks, swap, operating time, system version. The data is collected separately and nothing is printed to the terminal. Works for servers on **Linux, macOS, FreeBSD and Windows** (with OpenSSH).
 
 ### 🗂 Organize your servers
 
@@ -163,6 +163,17 @@ Forwards are started on every connection. The **“Ports”** button above the t
 
 ---
 
+## ⚙️ Settings and language
+
+The gear in the top right corner (or `Ctrl+,`) opens the settings. Changes apply immediately:
+
+- **Interface language** — English or Russian.
+- **Interface scale** — if everything looks too small or too large.
+- **Terminal** — font, font size, line height, cursor style and blinking, scrollback length, right-click behaviour, copy on select.
+- **Files** — downloads folder (also per server: server settings → "Advanced"), whether to ask for a folder every time, hidden files, the folder the "This computer" pane opens in.
+
+In the **Transfers** window a finished file has **Show in folder** and **Open** buttons.
+
 ## Keyboard shortcuts
 
 The most useful: `Ctrl+Shift+K` - find a server, `Ctrl+Shift+N` - new server, `Alt+2` - scripts, `Ctrl+Shift+C` / `Ctrl+Shift+V` - copy / paste in the terminal. Right click on anything - action menu.
@@ -174,6 +185,7 @@ The most useful: `Ctrl+Shift+K` - find a server, `Ctrl+Shift+N` - new server, `A
 |---|---|
 | `Ctrl+Shift+K` | Search for a server (`Enter` - connect to the first one) |
 | `Ctrl+Shift+N` | New server |
+| `Ctrl+,` | Settings |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Ctrl+Alt+1…9` | Go to tab by number |
 | `Ctrl+Shift+W` | Close the panel (the last one - together with the tab) |
