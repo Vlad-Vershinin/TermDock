@@ -437,6 +437,17 @@ fn download_dir(settings: State<SettingsStore>, server_dir: Option<String>, glob
     settings::resolve_download_dir(server_dir.as_deref(), &global).to_string_lossy().into_owned()
 }
 
+/// Opens a local file or folder with its default app. Done here rather than via the opener
+/// plugin's JS API so that no path scope has to be granted to the webview.
+#[tauri::command]
+fn open_local_path(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Файл не найден: {path}"));
+    }
+    app.opener().open_path(&path, None::<&str>).map_err(|e| format!("Не удалось открыть {path}: {e}"))
+}
+
 // ---------- files ----------
 
 #[tauri::command]
@@ -645,6 +656,7 @@ pub fn run() {
             get_settings,
             save_settings,
             download_dir,
+            open_local_path,
             ssh_connect,
             ssh_config_lookup,
             ssh_write,

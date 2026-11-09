@@ -169,6 +169,7 @@ export const api = {
   saveSettings: (value: Settings) => invoke<Settings>("save_settings", { value }),
   /** Resolved downloads folder: the server's own, else the global one, else the OS Downloads (`~` expanded). */
   downloadDir: (serverDir?: string | null, global?: string) => invoke<string>("download_dir", { serverDir: serverDir ?? null, global: global ?? null }),
+  openLocalPath: (path: string) => invoke<void>("open_local_path", { path }),
 
   listFolders: () => invoke<string[]>("list_folders"),
   saveFolders: (names: string[]) => invoke<string[]>("save_folders", { names }),
