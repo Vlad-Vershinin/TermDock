@@ -10,14 +10,13 @@ mod textcodec;
 
 use std::path::PathBuf;
 
-use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 use files::{Entry, Transfers};
 use scripts::{Script, Scripts};
 use std::collections::HashMap;
 
-use ssh::{ConnectParams, Hop, Sessions, TermEvent};
+use ssh::{ConnectParams, Hop, Sessions, TermChannel};
 use sshconfig::SshConfig;
 use store::{AuthMethod, Server, Store};
 
@@ -296,7 +295,7 @@ async fn ssh_connect(
     accept: Option<HashMap<String, String>>,
     cols: u32,
     rows: u32,
-    events: Channel<TermEvent>,
+    events: TermChannel,
 ) -> Result<String, String> {
     let server = store.get(&server_id).ok_or("Сервер не найден")?;
     let typed = secrets.unwrap_or_default();
