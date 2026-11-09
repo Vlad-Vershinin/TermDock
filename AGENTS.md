@@ -51,6 +51,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `stats.rs` | Server telemetry: one script per OS flavour (Linux / macOS / FreeBSD / Windows PowerShell) + parsers |
 | `store.rs` | `Server`, `Jump`, `Forward`, `AuthMethod`; JSON persistence; OS keychain via `keyring` |
 | `scripts.rs` | Saved scripts (`scripts.json`) |
+| `settings.rs` | Global app settings (`settings.json`, every field `#[serde(default)]`, `sanitize()` clamps), download-folder resolution |
 | `dragout.rs` | Temp folders / helpers for dragging files out to the OS |
 
 ### Frontend (`src/`)
@@ -64,11 +65,13 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `components/Editor.tsx` → `CodeEditor.tsx` | Lazy-loaded CodeMirror 6 editor; `lib/codemirror.ts` has languages, theme, encoding list |
 | `components/Sidebar.tsx`, `ServerDialog.tsx` | Server list with folders; add/edit dialog (auth, jump host, connect script, port forwards) |
 | `components/Scripts.tsx`, `Telemetry.tsx`, `Ports.tsx` | Scripts panel/dialog, CPU/RAM/disk widget, port-forward popover |
+| `components/SettingsDialog.tsx` | Settings dialog (gear in the title bar, Ctrl+,): Interface / Terminal / Files; changes apply at once |
 | `lib/api.ts` | **Typed wrappers for every Rust command** + shared TS types (mirror of Rust structs) |
 | `lib/ui.tsx` | `useUi()`: `toast`, `dialog`, `confirm`, `prompt`, `menu` (context menu) |
 | `lib/dnd.ts` | Custom pointer-based drag & drop (not HTML5 DnD) |
 | `lib/dragout.ts` | Drag files out of the window into the OS file manager (tauri-plugin-drag) |
-| `lib/transfers.tsx` | Transfer queue + `transfer-progress` event listener |
+| `lib/settings.tsx` | `useSettings()`: `settings` + `update(patch)` (live, debounced save to `settings.json`); `DEFAULT_SETTINGS` mirrors Rust |
+| `lib/transfers.tsx` | Transfer queue + `transfer-progress` event listener; Transfers panel ("Показать в папке" / "Открыть" for local files) |
 | `lib/sessions.ts` | `paneRegistry` (terminals for scripts) and `remotePaneRegistry` (SFTP panes for server→server copy) |
 | `lib/scripts.ts` | `{{var:default}}` substitution, whole-vs-step run input (`commandBlock`) |
 | `styles.css` | All styling; JetBrains-like dark theme via CSS variables on `:root` |
@@ -92,14 +95,14 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 - **Drag & drop is custom** (`dnd.ts`): drop zones are `data-dropzone` / `data-accept` elements, folder rows carry `data-dropdir`. Tauri's native file-drop is enabled for OS → app; HTML5 DnD is unreliable alongside it.
 - **Terminal panes stay mounted** when their tab is hidden (`visible` prop); don't unmount `SessionView` to hide it.
 - **Telemetry commands run on a separate exec channel**, never in the user's shell, and must not print into the terminal. Remote scripts must survive csh/fish login shells (`sh -c '…'`, no `'`/`!`/backslashes).
-- **Persisted UI state** uses `localStorage` keys prefixed `td.` (`td.sidebar`, `td.split`, `td.showFiles`, …).
+- **Persisted UI state** uses `localStorage` keys prefixed `td.` (`td.sidebar`, `td.split`, `td.showFiles`, …). User preferences (terminal font, downloads folder, …) belong in `settings.json` via `useSettings()` instead: add the field to `settings.rs` (default + `sanitize`), `Settings` in `api.ts`, `DEFAULT_SETTINGS` and `SettingsDialog.tsx`.
 - **CSP** (`tauri.conf.json`) allows only `ipc:` connections and `'self'` assets — no network fetches, no CDN fonts/scripts from the app.
 - Remote paths are always POSIX; local paths may be Windows (`lib/paths.ts`).
 - Keep diffs focused: no drive-by reformatting; match the surrounding style (Rust: rustfmt-ish, 4 spaces; TS/TSX: 2 spaces, double quotes).
 
 ## Data locations (runtime)
 
-`servers.json`, `folders.json`, `scripts.json`, `known_hosts` in the app config dir: `~/.config/dev.termdock.app/` (Linux), `%APPDATA%\dev.termdock.app\` (Windows). The app also reads (never writes) the user's `~/.ssh/known_hosts` and `~/.ssh/config`.
+`servers.json`, `folders.json`, `scripts.json`, `settings.json`, `known_hosts` in the app config dir: `~/.config/dev.termdock.app/` (Linux), `%APPDATA%\dev.termdock.app\` (Windows). The app also reads (never writes) the user's `~/.ssh/known_hosts` and `~/.ssh/config`.
 
 ## Git & releases
 
