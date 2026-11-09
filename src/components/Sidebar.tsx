@@ -144,11 +144,16 @@ export function Sidebar(props: Props) {
       "-",
       { label: "Изменить…", icon: <IEdit size={13} />, onClick: () => onEdit(s) },
       { label: "Копировать адрес", icon: <ICopy size={13} />, onClick: () => writeText(`${s.username}@${s.host}${s.port !== 22 ? `:${s.port}` : ""}`) },
-      "-",
-      { header: "Переместить в папку" },
-      ...targets,
-      ...(current ? [{ label: "Без папки", icon: <IFolderOut size={13} />, onClick: () => onMove([s.id], "") }] : []),
-      { label: "Новая папка…", icon: <IFolderPlus size={13} />, onClick: () => moveToNewFolder(s) },
+      {
+        label: "Переместить в папку",
+        icon: <IFolder size={13} />,
+        submenu: [
+          ...targets,
+          ...(current ? [{ label: "Без папки", icon: <IFolderOut size={13} />, onClick: () => onMove([s.id], "") }] : []),
+          ...(targets.length || current ? ["-" as const] : []),
+          { label: "Новая папка…", icon: <IFolderPlus size={13} />, onClick: () => moveToNewFolder(s) },
+        ],
+      },
       "-",
       { label: "Удалить", icon: <ITrash size={13} />, danger: true, onClick: () => onDelete(s) },
     ]);

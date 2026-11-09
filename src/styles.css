@@ -345,6 +345,9 @@ td.mode { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
 .ctx-icon { width: 18px; display: inline-grid; place-items: center; color: var(--muted); flex: none; }
 .ctx-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .ctx-hint { color: var(--muted); font-size: 11px; margin-left: 16px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.ctx-item.open:not(:focus-visible):not(:hover) { background: var(--bg-3); }
+.ctx-arrow { display: inline-grid; place-items: center; margin-left: 12px; margin-right: -4px; color: var(--muted); flex: none; }
+.ctx-item:hover:not(:disabled) .ctx-arrow, .ctx-item:focus-visible .ctx-arrow { color: #fff; }
 .ctx-sep { height: 1px; background: var(--line); margin: 4px 6px; }
 .ctx-header { padding: 6px 10px 3px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
 

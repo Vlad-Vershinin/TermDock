@@ -1,4 +1,5 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { IChevronRight } from "../components/Icons";
 
 // ---------- toasts ----------
 
@@ -23,6 +24,8 @@ type DialogResult = Record<string, string | boolean> | null;
 
 export type MenuItem =
   | { label: string; icon?: ReactNode; hint?: string; danger?: boolean; disabled?: boolean; onClick: () => void }
+  /** Opens a nested menu to the side (on hover, click or ArrowRight). */
+  | { label: string; icon?: ReactNode; disabled?: boolean; submenu: MenuItem[] }
   | { header: string }
   | "-";
 
@@ -168,27 +171,45 @@ function DialogView({ spec, onClose }: { spec: DialogSpec; onClose: (r: DialogRe
   );
 }
 
+/** One opened submenu: index of its item in the parent panel and that item's rect. */
+type OpenSub = { index: number; rect: DOMRect; focus: boolean };
+
+// Delay before hover opens/closes a submenu, so a diagonal pointer path doesn't flicker it.
+const SUB_DELAY = 180;
+
 function MenuView({ state, onClose }: { state: MenuState; onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ x: state.x, y: state.y, ready: false });
+  const root = useRef<HTMLDivElement>(null);
+  const [path, setPath] = useState<OpenSub[]>([]);
+  const pathRef = useRef(path);
+  pathRef.current = path;
+  const timer = useRef<number | undefined>(undefined);
 
-  // Keep the menu inside the window.
-  useEffect(() => {
-    const el = ref.current!;
-    const { width, height } = el.getBoundingClientRect();
-    const x = Math.max(4, Math.min(state.x, window.innerWidth - width - 4));
-    const y = state.y + height > window.innerHeight - 4 ? Math.max(4, state.y - height) : state.y;
-    setPos({ x, y, ready: true });
-    el.focus();
-  }, [state]);
+  // Stable anchor: the root panel repositions (and refocuses) only when the menu is reopened.
+  const rootAnchor = useMemo(() => ({ x: state.x, y: state.y }), [state]);
+
+  useEffect(() => setPath([]), [state]);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const focusItem = (level: number, index: number) =>
+    root.current?.querySelector<HTMLButtonElement>(`[data-level="${level}"] [data-index="${index}"]`)?.focus();
+
+  // Closes the deepest submenu and returns focus to the item that opened it.
+  const closeLast = () => {
+    const p = pathRef.current;
+    if (!p.length) return false;
+    window.clearTimeout(timer.current);
+    setPath(p.slice(0, -1));
+    focusItem(p.length - 1, p[p.length - 1].index);
+    return true;
+  };
 
   useEffect(() => {
-    const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
+    const down = (e: MouseEvent) => !root.current?.contains(e.target as Node) && onClose();
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        onClose();
+        if (!closeLast()) onClose();
       }
     };
     window.addEventListener("mousedown", down, true);
@@ -203,14 +224,115 @@ function MenuView({ state, onClose }: { state: MenuState; onClose: () => void })
     };
   }, [onClose]);
 
-  // Arrow-key navigation between enabled items.
+  const schedule = (fn: () => void) => {
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(fn, SUB_DELAY);
+  };
+
+  const open = (level: number, index: number, el: HTMLElement, focus: boolean) => {
+    window.clearTimeout(timer.current);
+    const p = pathRef.current;
+    if (p[level]?.index === index && p.length === level + 1 && !focus) return;
+    setPath([...p.slice(0, level), { index, rect: el.getBoundingClientRect(), focus }]);
+  };
+
+  // Item lists of every visible panel: the root menu plus each opened submenu.
+  const panels: MenuItem[][] = [state.items];
+  for (const s of path) {
+    const it = panels[panels.length - 1][s.index];
+    if (typeof it !== "object" || !("submenu" in it)) break;
+    panels.push(it.submenu);
+  }
+
+  return (
+    <div ref={root}>
+      {panels.map((items, level) => (
+        <MenuPanel
+          key={level === 0 ? "0" : `${level}:${path[level - 1].index}`}
+          items={items}
+          level={level}
+          anchor={level === 0 ? rootAnchor : path[level - 1].rect}
+          autoFocus={level === 0 || path[level - 1].focus}
+          openIndex={path[level]?.index}
+          onEnter={() => level > 0 && window.clearTimeout(timer.current)}
+          onHover={(index, el) => {
+            const it = items[index];
+            if (typeof it === "object" && "submenu" in it && !it.disabled) schedule(() => open(level, index, el, false));
+            else if (pathRef.current.length > level) schedule(() => setPath(pathRef.current.slice(0, level)));
+            else window.clearTimeout(timer.current);
+          }}
+          onOpen={(index, el) => open(level, index, el, true)}
+          onBack={() => level > 0 && closeLast()}
+          onClose={onClose}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MenuPanel({
+  items,
+  level,
+  anchor,
+  autoFocus,
+  openIndex,
+  onEnter,
+  onHover,
+  onOpen,
+  onBack,
+  onClose,
+}: {
+  items: MenuItem[];
+  level: number;
+  /** Root: the click point. Submenu: the rect of the item that opened it. */
+  anchor: { x: number; y: number } | DOMRect;
+  autoFocus: boolean;
+  openIndex?: number;
+  onEnter: () => void;
+  onHover: (index: number, el: HTMLElement) => void;
+  onOpen: (index: number, el: HTMLElement) => void;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x: 0, y: 0, ready: false });
+
+  // Keep the menu inside the window; a submenu goes right of its item, or flips left if it doesn't fit.
+  useEffect(() => {
+    const el = ref.current!;
+    const { width, height } = el.getBoundingClientRect();
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    let x: number, y: number;
+    if (anchor instanceof DOMRect) {
+      x = anchor.right + width <= W - 4 ? anchor.right : anchor.left - width;
+      x = Math.max(4, Math.min(x, W - width - 4));
+      // Align the first item with the parent item (panel padding + border), shift up if needed.
+      y = Math.max(4, Math.min(anchor.top - 6, H - height - 4));
+    } else {
+      x = Math.max(4, Math.min(anchor.x, W - width - 4));
+      y = anchor.y + height > H - 4 ? Math.max(4, anchor.y - height) : anchor.y;
+    }
+    setPos({ x, y, ready: true });
+    if (level === 0) el.focus();
+    else if (autoFocus) el.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [anchor]);
+
+  // Arrow-key navigation between enabled items; Right/Left open and close submenus.
   const onKey = (e: React.KeyboardEvent) => {
     const buttons = [...ref.current!.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
-    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const active = document.activeElement as HTMLButtonElement;
+    const i = buttons.indexOf(active);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const n = e.key === "ArrowDown" ? (i + 1) % buttons.length : (i - 1 + buttons.length) % buttons.length;
       buttons[n]?.focus();
+    } else if (e.key === "ArrowRight" && i >= 0 && active.dataset.sub) {
+      e.preventDefault();
+      onOpen(Number(active.dataset.index), active);
+    } else if (e.key === "ArrowLeft" && level > 0) {
+      e.preventDefault();
+      onBack();
     }
   };
 
@@ -218,23 +340,46 @@ function MenuView({ state, onClose }: { state: MenuState; onClose: () => void })
     <div
       ref={ref}
       className="ctx-menu"
+      role="menu"
+      data-level={level}
       tabIndex={-1}
       style={{ left: pos.x, top: pos.y, visibility: pos.ready ? "visible" : "hidden" }}
       onKeyDown={onKey}
+      onMouseEnter={onEnter}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {state.items.map((it, i) =>
+      {items.map((it, i) =>
         it === "-" ? (
           <div key={i} className="ctx-sep" />
         ) : "header" in it ? (
           <div key={i} className="ctx-header">
             {it.header}
           </div>
+        ) : "submenu" in it ? (
+          <button
+            key={i}
+            data-index={i}
+            data-sub="1"
+            className={`ctx-item ${openIndex === i ? "open" : ""}`}
+            disabled={it.disabled}
+            aria-haspopup="menu"
+            aria-expanded={openIndex === i}
+            onMouseEnter={(e) => onHover(i, e.currentTarget)}
+            onClick={(e) => onOpen(i, e.currentTarget)}
+          >
+            <span className="ctx-icon">{it.icon}</span>
+            <span className="ctx-label">{it.label}</span>
+            <span className="ctx-arrow">
+              <IChevronRight size={12} />
+            </span>
+          </button>
         ) : (
           <button
             key={i}
+            data-index={i}
             className={`ctx-item ${it.danger ? "danger" : ""}`}
             disabled={it.disabled}
+            onMouseEnter={(e) => onHover(i, e.currentTarget)}
             onClick={() => {
               onClose();
               it.onClick();

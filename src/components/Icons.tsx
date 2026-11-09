@@ -126,6 +126,7 @@ export const ISidebar = svg(
 );
 export const IActivity = svg(<path d="M3 12h4l3-8 4 16 3-8h4" />);
 export const IChevronDown = svg(<path d="M6 9l6 6 6-6" />);
+export const IChevronRight = svg(<path d="M9 6l6 6-6 6" />);
 export const IHome = svg(<path d="M3 11l9-7 9 7M5 9v11h14V9" />);
 export const ILink = svg(<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />);
 export const ISave = svg(<path d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM7 3v6h8V3M7 21v-7h10v7" />);
