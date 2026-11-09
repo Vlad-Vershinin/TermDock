@@ -71,6 +71,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <form
         className="modal modal-wide settings"
+        // Nothing inside is autofocused; take focus so Escape reaches onKeyDown.
+        tabIndex={-1}
+        ref={(el) => {
+          if (el && !el.contains(document.activeElement)) el.focus();
+        }}
         onSubmit={(e) => {
           e.preventDefault();
           onClose();
