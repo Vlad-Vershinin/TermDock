@@ -14,6 +14,8 @@ export interface Server {
   group?: string | null;
   color?: string | null;
   remoteDir?: string | null;
+  /** Local folder for "download to the downloads folder"; empty = the global setting. */
+  downloadDir?: string | null;
   hasSecret: boolean;
   /** Connect through this jump host. */
   jump?: Jump | null;

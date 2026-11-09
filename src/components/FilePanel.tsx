@@ -4,13 +4,13 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api, Entry, errorText, ReadTextOptions, Server, TextEncoding, TextFile } from "../lib/api";
 import { beginDrag, DropDetail } from "../lib/dnd";
 import { remotePaneRegistry } from "../lib/sessions";
-import { useSettings } from "../lib/settings";
+import { pickFolder, useSettings } from "../lib/settings";
 import { dragOutLocal, dragOutRemote } from "../lib/dragout";
 import { baseName, formatDate, formatMode, formatSize, joinPath, parentPath } from "../lib/paths";
 import { useTransfers } from "../lib/transfers";
 import { MenuItem, useUi } from "../lib/ui";
 import { Editor } from "./Editor";
-import { IArchive, ICopy, ICopyServer, IDownload, IEdit, IEye, IFile, IFileCode, IFilePlus, IFolder, IFolderPlus, IImage, IMonitor, IRefresh, IServer, ITerminal, ITrash, IUp, IUpload } from "./Icons";
+import { IArchive, ICopy, ICopyServer, IDownload, IEdit, IEye, IFile, IFileCode, IFilePlus, IFolder, IFolderDown, IFolderPlus, IImage, IMonitor, IRefresh, IServer, ITerminal, ITrash, IUp, IUpload } from "./Icons";
 
 type Side = "local" | "remote";
 
@@ -128,11 +128,21 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
   const local = usePane(localAdapter, "local", settings.showHidden);
   const remote = usePane(remoteAdapter, "remote", settings.showHidden);
 
+  // Downloads folder for this server (per-server override → global setting → OS Downloads).
+  const [downloadsDir, setDownloadsDir] = useState<string | null>(null);
+  useEffect(() => {
+    api.downloadDir(server.downloadDir, settings.downloadDir).then(setDownloadsDir, () => setDownloadsDir(null));
+  }, [server.downloadDir, settings.downloadDir]);
+
   // Initial directories.
   useEffect(() => {
     (async () => {
       const saved = localStorage.getItem("td.localDir");
       const home = await api.localHome();
+      if (settings.localStartDir === "downloads") {
+        const dl = await api.downloadDir(server.downloadDir, settings.downloadDir).catch(() => null);
+        if (dl && (await local.load(dl))) return;
+      }
       if (!(await local.load(saved ?? home)) && saved !== null) local.load(home);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -181,6 +191,16 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
     if (dest === "") return ui.toast("Выберите папку на диске", "error");
     await transfers.start({ direction: "down", sessionId, server: server.name, sources: paths, dest });
     local.refresh();
+  };
+
+  /** Downloads into the downloads folder (the server's own, else the global one), or asks where. */
+  const downloadToDownloads = async (paths: string[]) => {
+    if (!sessionId || paths.length === 0) return;
+    let dest = downloadsDir ?? (await api.downloadDir(server.downloadDir, settings.downloadDir).catch(() => null));
+    if (settings.askDownloadDir || !dest) dest = await pickFolder("Куда сохранить", dest ?? undefined);
+    if (!dest) return;
+    await transfers.start({ direction: "down", sessionId, server: server.name, sources: paths, dest });
+    if (local.dir === dest) local.refresh();
   };
 
   /** Copies remote paths from one pane's server into a folder of another pane's server. */
@@ -270,7 +290,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
         onDrop={(d) => onDrop(local, d)}
         onOpenFile={(e) => upload([e.path])}
         onDragOut={(paths) => dragOutLocal(paths, ui.toast)}
-        transfer={sessionId ? { label: "Загрузить на сервер", icon: <IUpload size={13} />, run: upload } : undefined}
+        transfer={sessionId ? [{ label: "Загрузить на сервер", icon: <IUpload size={13} />, run: upload }] : undefined}
         extra={
           <button className="btn btn-sm" disabled={!sessionId || local.selected.size === 0} onClick={() => upload(selectedPaths(local))} title="Загрузить выбранное на сервер">
             <IUpload size={13} /> <span className="btn-label">Загрузить</span>
@@ -286,7 +306,15 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
         onDrop={(d) => onDrop(remote, d)}
         onOpenFile={(e) => download([e.path])}
         onDragOut={dragOutRemoteFiles}
-        transfer={{ label: "Скачать на компьютер", icon: <IDownload size={13} />, run: download }}
+        transfer={[
+          { label: "Скачать на компьютер", hint: local.dir ? baseName(local.dir) : undefined, icon: <IDownload size={13} />, run: download },
+          {
+            label: settings.askDownloadDir ? "Скачать в…" : "Скачать в папку загрузок",
+            hint: !settings.askDownloadDir && downloadsDir ? baseName(downloadsDir) : undefined,
+            icon: <IFolderDown size={13} />,
+            run: downloadToDownloads,
+          },
+        ]}
         onCd={onCd}
         extraMenu={sessionId ? copyMenu : undefined}
         extra={
@@ -313,8 +341,8 @@ interface PaneProps {
   extra?: React.ReactNode;
   onDrop: (d: DropDetail) => void;
   onOpenFile: (e: Entry) => void;
-  /** Upload (local pane) / download (remote pane) for the context menu. */
-  transfer?: { label: string; icon: React.ReactNode; run: (paths: string[]) => void };
+  /** Upload (local pane) / download actions (remote pane) for the context menu. */
+  transfer?: { label: string; hint?: string; icon: React.ReactNode; run: (paths: string[]) => void }[];
   onCd?: (dir: string) => void;
   /** Extra context-menu items for the selected paths (server-to-server copy). */
   extraMenu?: (paths: string[]) => MenuItem[];
@@ -431,7 +459,7 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
         ? { label: "Открыть", icon: <IFolder size={13} />, hint: "Enter", onClick: () => pane.load(entry.path) }
         : { label: "Редактировать", icon: <IEdit size={13} />, hint: "F4", disabled: !single, onClick: () => edit(entry) },
       ...(single && entry.isDir && onCd ? [{ label: "Перейти в терминале", icon: <ITerminal size={13} />, onClick: () => onCd(entry.path) }] : []),
-      ...(transfer ? [{ label: transfer.label, icon: transfer.icon, onClick: () => transfer.run(paths) }] : []),
+      ...(transfer ?? []).map((t) => ({ label: t.label, hint: t.hint, icon: t.icon, onClick: () => t.run(paths) })),
       ...(extraMenu ? ["-" as const, ...extraMenu(paths)] : []),
       "-",
       { label: "Переименовать…", icon: <IEdit size={13} />, hint: "F2", disabled: !single, onClick: rename },

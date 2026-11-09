@@ -102,6 +102,9 @@ pub struct Server {
     /// Remote directory to open in the file panel (defaults to home).
     #[serde(default)]
     pub remote_dir: Option<String>,
+    /// Local folder for "download to the downloads folder"; overrides the global setting.
+    #[serde(default)]
+    pub download_dir: Option<String>,
     /// Whether a secret (password / passphrase) is saved in the keychain.
     #[serde(default)]
     pub has_secret: bool,
