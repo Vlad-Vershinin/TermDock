@@ -4,6 +4,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, errorText, Progress } from "./api";
 import { baseName, formatSize, joinPath } from "./paths";
 import { useUi } from "./ui";
+import { t as tr, useT } from "./i18n";
 import { IClose, ICopyServer, IDownload, IUpload } from "../components/Icons";
 
 export interface Transfer {
@@ -52,7 +53,7 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
       const { direction, sessionId, sources, dest } = args;
       const server = args.direction === "copy" ? `${args.server} → ${args.dstServer}` : args.server;
       const id = crypto.randomUUID();
-      const label = sources.length === 1 ? baseName(sources[0]) : `${sources.length} объектов`;
+      const label = sources.length === 1 ? baseName(sources[0]) : tr("transfers.items", { n: sources.length });
       const progress: Progress = { id, transferred: 0, total: 0, filesDone: 0, filesTotal: 0, current: "", status: "running" };
       // Downloads land as <dest>/<source name> (the backend overwrites, never renames).
       const localPaths = direction === "up" ? sources : direction === "down" ? sources.map((s) => joinPath(dest, baseName(s), false)) : [];
@@ -61,7 +62,7 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
         if (args.direction === "copy") await api.copyBetween(sessionId, id, sources, args.dstSessionId, dest);
         else if (direction === "up") await api.upload(sessionId, id, sources, dest);
         else await api.download(sessionId, id, sources, dest);
-        const done = direction === "copy" ? `Скопировано (${server})` : direction === "up" ? "Загружено" : "Скачано";
+        const done = direction === "copy" ? tr("transfers.copied", { server }) : direction === "up" ? tr("transfers.uploaded") : tr("transfers.downloaded");
         toast(`${done}: ${label}`, "success");
         return true;
       } catch (e) {
@@ -74,7 +75,7 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
               : t,
           ),
         );
-        if (msg !== "CANCELLED") toast(`Ошибка передачи ${label}: ${msg}`, "error");
+        if (msg !== "CANCELLED") toast(tr("transfers.failed", { label, error: msg }), "error");
         return false;
       }
     },
@@ -92,22 +93,23 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
 
 export function TransfersPanel({ onClose }: { onClose: () => void }) {
   const { transfers, cancel, clearFinished } = useTransfers();
+  const t_ = useT();
   const { toast } = useUi();
-  const reveal = (paths: string[]) => revealItemInDir(paths.length === 1 ? paths[0] : paths).catch((e) => toast(`Не удалось открыть папку: ${errorText(e)}`, "error"));
+  const reveal = (paths: string[]) => revealItemInDir(paths.length === 1 ? paths[0] : paths).catch((e) => toast(t_("transfers.revealFailed", { error: errorText(e) }), "error"));
   const open = (path: string) => api.openLocalPath(path).catch((e) => toast(errorText(e), "error"));
   return (
     <div className="transfers-panel">
       <div className="transfers-head">
-        <strong>Передачи</strong>
+        <strong>{t_("transfers.title")}</strong>
         <div className="spacer" />
         <button className="btn btn-sm" onClick={clearFinished}>
-          Очистить
+          {t_("transfers.clear")}
         </button>
-        <button className="icon-btn" onClick={onClose} title="Закрыть">
+        <button className="icon-btn" onClick={onClose} title={t_("common.close")}>
           <IClose size={13} />
         </button>
       </div>
-      {transfers.length === 0 && <div className="empty-small">Пока ничего не передавалось</div>}
+      {transfers.length === 0 && <div className="empty-small">{t_("transfers.empty")}</div>}
       <div className="transfers-list">
         {transfers.map((t) => {
           const p = t.progress;
@@ -122,7 +124,7 @@ export function TransfersPanel({ onClose }: { onClose: () => void }) {
                   {t.label}
                 </span>
                 {p.status === "running" && (
-                  <button className="icon-btn" title="Отменить" onClick={() => cancel(t.id)}>
+                  <button className="icon-btn" title={t_("transfers.cancel")} onClick={() => cancel(t.id)}>
                     <IClose size={13} />
                   </button>
                 )}
@@ -134,22 +136,22 @@ export function TransfersPanel({ onClose }: { onClose: () => void }) {
                 {p.status === "running" && (
                   <>
                     {t.direction === "copy" && <>{t.server} · </>}
-                    {formatSize(p.transferred)} / {formatSize(p.total)} · {p.filesDone}/{p.filesTotal} файл. ·{" "}
-                    {formatSize(speed)}/с
+                    {formatSize(p.transferred)} / {formatSize(p.total)} · {t_("transfers.files", { done: p.filesDone, total: p.filesTotal })} ·{" "}
+                    {t_("transfers.speed", { size: formatSize(speed) })}
                   </>
                 )}
-                {p.status === "done" && <>Готово · {formatSize(p.total)} · {t.server}</>}
-                {p.status === "cancelled" && <>Отменено</>}
+                {p.status === "done" && <>{t_("transfers.done")} · {formatSize(p.total)} · {t.server}</>}
+                {p.status === "cancelled" && <>{t_("transfers.cancelled")}</>}
                 {p.status === "error" && <span className="err">{p.error}</span>}
               </div>
               {p.status === "done" && t.localPaths.length > 0 && (
                 <div className="transfer-actions">
                   <button className="link-btn" onClick={() => reveal(t.localPaths)} title={t.localPaths.join("\n")}>
-                    Показать в папке
+                    {t_("transfers.reveal")}
                   </button>
                   {t.localPaths.length === 1 && (
                     <button className="link-btn" onClick={() => open(t.localPaths[0])} title={t.localPaths[0]}>
-                      Открыть
+                      {t_("common.open")}
                     </button>
                   )}
                 </div>

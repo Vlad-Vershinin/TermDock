@@ -1,9 +1,10 @@
-// CodeMirror setup for the built-in editor: theme, language detection, Russian UI phrases.
+// CodeMirror setup for the built-in editor: theme, language detection, localized UI phrases.
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { HighlightStyle, LanguageDescription, syntaxHighlighting } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { tags as t } from "@lezer/highlight";
+import { Key, t as tr } from "./i18n";
 
 // ---------- language ----------
 
@@ -34,7 +35,7 @@ export function detectLanguage(path: string): LanguageDescription | null {
 
 /** Footer name of the language. */
 export const languageLabel = (lang: LanguageDescription | null) =>
-  !lang ? "Обычный текст" : lang.name === "Properties files" ? "INI / Properties" : lang.name;
+  !lang ? tr("editor.plainText") : lang.name === "Properties files" ? "INI / Properties" : lang.name;
 
 // ---------- theme ----------
 
@@ -126,58 +127,66 @@ const highlight = HighlightStyle.define([
   { tag: t.deleted, color: "#f75464" },
 ]);
 
-const phrases = EditorState.phrases.of({
-  Find: "Найти",
-  Replace: "Заменить на",
-  next: "далее",
-  previous: "назад",
-  all: "все",
-  "match case": "регистр",
-  regexp: "рег. выражение",
-  "by word": "слово целиком",
-  replace: "заменить",
-  "replace all": "заменить все",
-  close: "закрыть",
-  "current match": "текущее совпадение",
-  "replaced $ matches": "заменено совпадений: $",
-  "replaced match on line $": "заменено совпадение в строке $",
-  "on line": "в строке",
-  "Go to line": "Перейти к строке",
-  go: "перейти",
-  "Folded lines": "Свёрнутые строки",
-  "Unfolded lines": "Развёрнутые строки",
-  "Fold line": "Свернуть",
-  "Unfold line": "Развернуть",
-  folded: "свёрнуто",
-  unfolded: "развёрнуто",
-});
+/** CodeMirror UI phrases (search panel, folding) in the current UI language. */
+const phrases = () =>
+  EditorState.phrases.of({
+    Find: tr("cm.find"),
+    Replace: tr("cm.replaceWith"),
+    next: tr("cm.next"),
+    previous: tr("cm.previous"),
+    all: tr("cm.all"),
+    "match case": tr("cm.matchCase"),
+    regexp: tr("cm.regexp"),
+    "by word": tr("cm.byWord"),
+    replace: tr("cm.replace"),
+    "replace all": tr("cm.replaceAll"),
+    close: tr("cm.close"),
+    "current match": tr("cm.currentMatch"),
+    "replaced $ matches": tr("cm.replacedMatches"),
+    "replaced match on line $": tr("cm.replacedMatchOnLine"),
+    "on line": tr("cm.onLine"),
+    "Go to line": tr("cm.goToLine"),
+    go: tr("cm.go"),
+    "Folded lines": tr("cm.foldedLines"),
+    "Unfolded lines": tr("cm.unfoldedLines"),
+    "Fold line": tr("cm.foldLine"),
+    "Unfold line": tr("cm.unfoldLine"),
+    folded: tr("cm.folded"),
+    unfolded: tr("cm.unfolded"),
+  });
 
-export const editorLook: Extension = [theme, syntaxHighlighting(highlight), phrases];
+/** Built per editor state, so the phrases follow the current UI language. */
+export const editorLook = (): Extension => [theme, syntaxHighlighting(highlight), phrases()];
 
 // ---------- encodings ----------
 
 /** Encodings offered in the editor footer. `encoding` is the backend name. */
-export const ENCODINGS: { label: string; encoding: string; bom: boolean }[] = [
+export const ENCODINGS: { label: string; note?: Key; encoding: string; bom: boolean }[] = [
   { label: "UTF-8", encoding: "UTF-8", bom: false },
-  { label: "UTF-8 с BOM", encoding: "UTF-8", bom: true },
+  { label: "UTF-8 BOM", encoding: "UTF-8", bom: true },
   { label: "UTF-16 LE", encoding: "UTF-16LE", bom: true },
   { label: "UTF-16 BE", encoding: "UTF-16BE", bom: true },
-  { label: "Windows-1251 (кириллица)", encoding: "windows-1251", bom: false },
+  { label: "Windows-1251", note: "enc.cyrillic", encoding: "windows-1251", bom: false },
   { label: "KOI8-R", encoding: "KOI8-R", bom: false },
   { label: "KOI8-U", encoding: "KOI8-U", bom: false },
-  { label: "CP866 (DOS)", encoding: "IBM866", bom: false },
+  { label: "CP866", note: "enc.dos", encoding: "IBM866", bom: false },
   { label: "ISO-8859-5", encoding: "ISO-8859-5", bom: false },
-  { label: "Windows-1252 (западная)", encoding: "windows-1252", bom: false },
-  { label: "ISO-8859-1 (Latin-1)", encoding: "ISO-8859-1", bom: false },
-  { label: "Windows-1250 (центр. Европа)", encoding: "windows-1250", bom: false },
+  { label: "Windows-1252", note: "enc.western", encoding: "windows-1252", bom: false },
+  { label: "ISO-8859-1", note: "enc.latin1", encoding: "ISO-8859-1", bom: false },
+  { label: "Windows-1250", note: "enc.central", encoding: "windows-1250", bom: false },
   { label: "Shift_JIS", encoding: "Shift_JIS", bom: false },
   { label: "GBK", encoding: "GBK", bom: false },
 ];
 
-/** Short footer label, e.g. "UTF-8 с BOM", "windows-1251". */
+const withBom = (label: string) => label.replace(/ BOM$/, ` ${tr("enc.withBom")}`);
+
+/** Menu label, e.g. "UTF-8 with BOM", "Windows-1251 (Cyrillic)". */
+export const encodingMenuLabel = (e: (typeof ENCODINGS)[number]) => withBom(e.label) + (e.note ? ` (${tr(e.note)})` : "");
+
+/** Short footer label, e.g. "UTF-8 with BOM", "windows-1251". */
 export function encodingLabel(encoding: string, bom: boolean): string {
   const e = ENCODINGS.find((x) => x.encoding.toLowerCase() === encoding.toLowerCase() && x.bom === bom);
-  const base = e ? e.label.replace(/ \(.*\)$/, "") : encoding;
+  if (e) return withBom(e.label);
   // UTF-16 without BOM isn't in the list, but can come from "reopen as".
-  return !e && bom ? `${base} с BOM` : !e && /^utf-16/i.test(encoding) ? `${base} без BOM` : base;
+  return bom ? `${encoding} ${tr("enc.withBom")}` : /^utf-16/i.test(encoding) ? `${encoding} ${tr("enc.noBom")}` : encoding;
 }

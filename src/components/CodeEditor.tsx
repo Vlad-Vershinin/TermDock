@@ -16,7 +16,8 @@ import { defaultKeymap, history, historyKeymap, indentLess, insertTab } from "@c
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, LanguageDescription } from "@codemirror/language";
 import { highlightSelectionMatches, openSearchPanel, searchKeymap } from "@codemirror/search";
 import { errorText, ReadTextOptions, TextEncoding, TextFile } from "../lib/api";
-import { detectLanguage, editorLook, encodingLabel, ENCODINGS, languageLabel } from "../lib/codemirror";
+import { detectLanguage, editorLook, encodingLabel, encodingMenuLabel, ENCODINGS, languageLabel } from "../lib/codemirror";
+import { useT } from "../lib/i18n";
 import { useUi } from "../lib/ui";
 import { IClose, ISave } from "./Icons";
 
@@ -34,6 +35,7 @@ const sameEnc = (a: TextEncoding, b: TextEncoding) => a.encoding.toLowerCase() =
 /** Text editor for config files and scripts: syntax highlighting, search/replace, encodings, unsaved-changes guard. */
 export default function CodeEditor({ title, load, save, onClose, onSaved }: EditorProps) {
   const ui = useUi();
+  const tr = useT();
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -62,8 +64,8 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
     } catch (e) {
       const m = /^TOO_BIG\|(\d+)$/.exec(errorText(e));
       if (!m) throw e;
-      const mb = (Number(m[1]) / 1024 / 1024).toFixed(1).replace(".", ",");
-      if (!(await ui.confirm(`Файл большой (${mb} МБ). Открыть всё равно?`, "Редактор может работать медленнее."))) return null;
+      const mb = (Number(m[1]) / 1024 / 1024).toLocaleString(tr("locale"), { maximumFractionDigits: 1 });
+      if (!(await ui.confirm(tr("editor.bigTitle", { mb }), tr("editor.bigText")))) return null;
       allowLarge.current = true;
       return load({ encoding, allowLarge: true });
     }
@@ -97,7 +99,7 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
           ...historyKeymap,
           ...foldKeymap,
         ]),
-        editorLook,
+        editorLook(),
         langComp.of(lang?.support ?? []),
         wrapComp.of(wrap ? EditorView.lineWrapping : []),
         EditorView.contentAttributes.of({ spellcheck: "false", autocapitalize: "off", autocorrect: "off" }),
@@ -131,7 +133,7 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
     setSaveEnc({ encoding: f.encoding, bom: f.bom });
     setStatus("ready");
     if (f.lossy)
-      ui.toast(`Часть байтов не подходит к кодировке ${encodingLabel(f.encoding, f.bom)} и показана как «�». При сохранении они будут потеряны.`, "error");
+      ui.toast(tr("editor.lossy", { enc: encodingLabel(f.encoding, f.bom) }), "error");
   };
 
   // Focus once the editor is visible: the host is `hidden` until then and can't take focus.
@@ -173,23 +175,23 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
       setDirty(!v.state.doc.eq(doc));
       setFileEnc(saveEnc);
       setLossy(false);
-      ui.toast("Сохранено", "success");
+      ui.toast(tr("editor.saved"), "success");
       onSaved?.();
     } catch (e) {
-      ui.toast(`Не удалось сохранить: ${errorText(e)}`, "error");
+      ui.toast(tr("editor.saveFailed", { error: errorText(e) }), "error");
     } finally {
       setSaving(false);
     }
   };
 
   const close = async () => {
-    if (dirty && !(await ui.confirm("Закрыть без сохранения?", "Изменения в файле будут потеряны.", true))) return;
+    if (dirty && !(await ui.confirm(tr("editor.closeTitle"), tr("editor.closeText"), true))) return;
     onClose();
   };
 
   /** Re-reads the original bytes and decodes them in another encoding. */
   const reopen = async (encoding: string) => {
-    if (dirty && !(await ui.confirm("Открыть файл заново?", "Несохранённые изменения будут потеряны."))) return;
+    if (dirty && !(await ui.confirm(tr("editor.reopenTitle"), tr("editor.reopenText")))) return;
     try {
       const f = await read(encoding);
       if (f) show(f);
@@ -204,9 +206,9 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
 
   const reopenMenu = (el: HTMLElement) =>
     ui.menu(el, [
-      { header: "Открыть заново в кодировке" },
+      { header: tr("editor.reopenAs") },
       ...ENCODINGS.filter((e) => !(e.encoding === "UTF-8" && e.bom)).map((e) => ({
-        label: e.label,
+        label: encodingMenuLabel(e),
         icon: status === "ready" && e.encoding.toLowerCase() === fileEnc.encoding.toLowerCase() ? "✓" : undefined,
         onClick: () => reopen(e.encoding),
       })),
@@ -214,9 +216,9 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
 
   const saveMenu = (el: HTMLElement) =>
     ui.menu(el, [
-      { header: "Сохранять в кодировке" },
+      { header: tr("editor.saveAs") },
       ...ENCODINGS.map((e) => ({
-        label: e.label,
+        label: encodingMenuLabel(e),
         icon: sameEnc(e, saveEnc) ? "✓" : undefined,
         onClick: () => {
           setSaveEnc({ encoding: e.encoding, bom: e.bom });
@@ -243,7 +245,7 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
       >
         <div className="editor-head">
           <span className="editor-title" title={title}>
-            {dirty && <span className="dirty-dot" title="Есть несохранённые изменения" />}
+            {dirty && <span className="dirty-dot" title={tr("editor.unsaved")} />}
             {title}
           </span>
           <div className="spacer" />
@@ -256,12 +258,12 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
                 localStorage.setItem("td.editorWrap", e.target.checked ? "1" : "0");
               }}
             />
-            Перенос строк
+            {tr("editor.wrap")}
           </label>
-          <button className="btn btn-sm btn-primary" onClick={doSave} disabled={!canSave || saving} title="Сохранить (Ctrl+S)">
-            <ISave size={13} /> Сохранить
+          <button className="btn btn-sm btn-primary" onClick={doSave} disabled={!canSave || saving} title={tr("editor.saveHint")}>
+            <ISave size={13} /> {tr("common.save")}
           </button>
-          <button className="icon-btn" onClick={close} title="Закрыть (Esc)">
+          <button className="icon-btn" onClick={close} title={tr("editor.closeHint")}>
             <IClose size={14} />
           </button>
         </div>
@@ -274,28 +276,28 @@ export default function CodeEditor({ title, load, save, onClose, onSaved }: Edit
           {status === "ready" && (
             <>
               <span>
-                Стр {cursor.line}, стлб {cursor.col}
+                {tr("editor.cursor", { line: cursor.line, col: cursor.col })}
               </span>
-              <span>{lines} строк</span>
+              <span>{tr("editor.lines", { n: lines })}</span>
               <span>{crlf ? "CRLF" : "LF"}</span>
               <span>{languageLabel(lang)}</span>
               <button
                 className="foot-btn"
                 onClick={(e) => saveMenu(e.currentTarget)}
-                title={`Файл в кодировке ${encodingLabel(fileEnc.encoding, fileEnc.bom)}. Нажмите, чтобы выбрать кодировку для сохранения`}
+                title={tr("editor.encHint", { enc: encodingLabel(fileEnc.encoding, fileEnc.bom) })}
               >
                 {sameEnc(saveEnc, fileEnc)
                   ? encodingLabel(saveEnc.encoding, saveEnc.bom)
                   : `${encodingLabel(fileEnc.encoding, fileEnc.bom)} → ${encodingLabel(saveEnc.encoding, saveEnc.bom)}`}
-                {lossy && <span className="err"> (есть ошибки)</span>}
+                {lossy && <span className="err"> ({tr("editor.hasErrors")})</span>}
               </button>
             </>
           )}
-          <button className="foot-btn" onClick={(e) => reopenMenu(e.currentTarget)} title="Открыть файл заново в другой кодировке">
-            Открыть в…
+          <button className="foot-btn" onClick={(e) => reopenMenu(e.currentTarget)} title={tr("editor.reopenHint")}>
+            {tr("editor.reopenIn")}
           </button>
           <div className="spacer" />
-          <span className="muted">Ctrl+S — сохранить · Ctrl+F / Ctrl+H — поиск и замена · Esc — закрыть</span>
+          <span className="muted">{tr("editor.keys")}</span>
         </div>
       </div>
     </div>

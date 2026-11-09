@@ -3,6 +3,7 @@ import { api, errorText, Script } from "../lib/api";
 import { fillVariables, scriptInput, scriptSteps, scriptVariables } from "../lib/scripts";
 import { paneRegistry } from "../lib/sessions";
 import { useUi } from "../lib/ui";
+import { T, t as trNow, useT } from "../lib/i18n";
 import { IClose, IEdit, IPlay, IPlus, IScript, IStep, ITrash } from "./Icons";
 
 interface ScriptsCtx {
@@ -30,7 +31,7 @@ export function ScriptsProvider({ children }: { children: ReactNode }) {
 
   const remove = useCallback(
     async (s: Script) => {
-      if (!(await ui.confirm("Удалить скрипт?", `«${s.name}» будет удалён.`, true))) return;
+      if (!(await ui.confirm(trNow("scripts.deleteTitle"), trNow("scripts.deleteText", { name: s.name }), true))) return;
       try {
         await api.deleteScript(s.id);
         setScripts((l) => l.filter((x) => x.id !== s.id));
@@ -44,20 +45,20 @@ export function ScriptsProvider({ children }: { children: ReactNode }) {
   const run = useCallback(
     async (s: Script, paneId: string | null | undefined, steps = !!s.steps) => {
       const pane = paneRegistry.get(paneId);
-      if (!pane) return ui.toast("Откройте терминал сервера, чтобы выполнить скрипт", "error");
+      if (!pane) return ui.toast(trNow("scripts.openTerminal"), "error");
       let body = s.body;
       const vars = scriptVariables(body);
       if (vars.length) {
         const r = await ui.dialog({
-          title: `Запуск «${s.name}»`,
+          title: trNow("scripts.runTitle", { name: s.name }),
           fields: vars.map((v) => ({ name: v.name, label: v.name, value: v.def })),
-          okText: "Выполнить",
+          okText: trNow("scripts.run"),
         });
         if (!r) return;
         body = fillVariables(body, Object.fromEntries(vars.map((v) => [v.name, String(r[v.name] ?? "")])));
       }
       const sent = steps && s.mode !== "bash" ? pane.runSteps(s.name, scriptSteps(body)) : pane.send(scriptInput(s, body));
-      if (!sent) return ui.toast("Терминал не подключён", "error");
+      if (!sent) return ui.toast(trNow("scripts.notConnected"), "error");
       pane.focus();
     },
     [ui],
@@ -82,16 +83,17 @@ export function ScriptsProvider({ children }: { children: ReactNode }) {
   );
 }
 
-const scriptHint = (s: Script) => (s.mode === "bash" ? "bash" : s.steps ? "по шагам" : undefined);
+const scriptHint = (tr: T, s: Script) => (s.mode === "bash" ? "bash" : s.steps ? tr("scripts.stepsTag") : undefined);
 
 /** Menu items for running scripts (title bar / session bar dropdowns). */
 export function useScriptMenu() {
   const { scripts, run, edit } = useScripts();
+  const tr = useT();
   return (paneId: string | null | undefined) => [
-    ...(scripts.length ? [{ header: "Выполнить скрипт" }] : []),
-    ...scripts.map((s) => ({ label: s.name, icon: <IPlay size={13} />, hint: scriptHint(s), onClick: () => run(s, paneId) })),
+    ...(scripts.length ? [{ header: tr("scripts.runScript") }] : []),
+    ...scripts.map((s) => ({ label: s.name, icon: <IPlay size={13} />, hint: scriptHint(tr, s), onClick: () => run(s, paneId) })),
     ...(scripts.length ? (["-"] as const) : []),
-    { label: "Новый скрипт…", icon: <IPlus size={13} />, onClick: () => edit(null) },
+    { label: tr("scripts.newMenu"), icon: <IPlus size={13} />, onClick: () => edit(null) },
   ];
 }
 
@@ -99,6 +101,7 @@ export function useScriptMenu() {
 
 export function ScriptsPanel({ paneId, target, onClose }: { paneId: string | null; target: string | null; onClose: () => void }) {
   const ui = useUi();
+  const tr = useT();
   const { scripts, edit, remove, run } = useScripts();
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -107,27 +110,27 @@ export function ScriptsPanel({ paneId, target, onClose }: { paneId: string | nul
   return (
     <aside className="toolwin">
       <div className="toolwin-head">
-        <IScript /> <span className="toolwin-title">Скрипты</span>
+        <IScript /> <span className="toolwin-title">{tr("app.scripts")}</span>
         <div className="spacer" />
-        <button className="icon-btn" title="Новый скрипт" onClick={() => edit(null)}>
+        <button className="icon-btn" title={tr("scripts.new")} onClick={() => edit(null)}>
           <IPlus />
         </button>
-        <button className="icon-btn" title="Скрыть (Alt+2)" onClick={onClose}>
+        <button className="icon-btn" title={tr("scripts.hide")} onClick={onClose}>
           <IClose size={13} />
         </button>
       </div>
       {scripts.length > 0 && (
         <div className="toolwin-search">
-          <input placeholder="Поиск скриптов" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setQuery("")} />
+          <input placeholder={tr("scripts.search")} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setQuery("")} />
         </div>
       )}
       <div className="toolwin-body">
         {scripts.length === 0 ? (
           <div className="empty-small">
-            Сохраняйте часто повторяемые наборы команд и запускайте их на любом сервере в один клик — без алиасов на каждом сервере.
+            {tr("scripts.empty")}
             <br />
             <button className="btn btn-sm btn-primary" style={{ marginTop: 12 }} onClick={() => edit(null)}>
-              <IPlus size={13} /> Создать скрипт
+              <IPlus size={13} /> {tr("scripts.create")}
             </button>
           </div>
         ) : (
@@ -138,31 +141,31 @@ export function ScriptsPanel({ paneId, target, onClose }: { paneId: string | nul
               onDoubleClick={() => run(s, paneId)}
               onContextMenu={(e) =>
                 ui.menu(e, [
-                  { label: "Выполнить целиком", icon: <IPlay size={13} />, disabled: !paneId, onClick: () => run(s, paneId, false) },
-                  ...(s.mode === "bash" ? [] : [{ label: "Выполнить по шагам", icon: <IStep size={13} />, disabled: !paneId, onClick: () => run(s, paneId, true) }]),
-                  { label: "Изменить", icon: <IEdit size={13} />, onClick: () => edit(s) },
-                  { label: "Дублировать", icon: <IPlus size={13} />, onClick: () => edit({ ...s, id: "", name: `${s.name} (копия)` }) },
+                  { label: tr("scripts.runWhole"), icon: <IPlay size={13} />, disabled: !paneId, onClick: () => run(s, paneId, false) },
+                  ...(s.mode === "bash" ? [] : [{ label: tr("scripts.runSteps"), icon: <IStep size={13} />, disabled: !paneId, onClick: () => run(s, paneId, true) }]),
+                  { label: tr("common.edit"), icon: <IEdit size={13} />, onClick: () => edit(s) },
+                  { label: tr("scripts.duplicate"), icon: <IPlus size={13} />, onClick: () => edit({ ...s, id: "", name: tr("scripts.copyName", { name: s.name }) }) },
                   "-",
-                  { label: "Удалить", icon: <ITrash size={13} />, danger: true, onClick: () => remove(s) },
+                  { label: tr("common.delete"), icon: <ITrash size={13} />, danger: true, onClick: () => remove(s) },
                 ])
               }
               title={s.body}
             >
-              <button className="icon-btn run" title={paneId ? `Выполнить в ${target}` : "Нет активного терминала"} disabled={!paneId} onClick={() => run(s, paneId)}>
+              <button className="icon-btn run" title={paneId ? tr("scripts.runIn", { target: target ?? "" }) : tr("scripts.noTerminal")} disabled={!paneId} onClick={() => run(s, paneId)}>
                 <IPlay size={14} />
               </button>
               <div className="script-text">
                 <div className="script-name">
                   {s.name}
-                  {scriptHint(s) && <span className="tag">{scriptHint(s)}</span>}
+                  {scriptHint(tr, s) && <span className="tag">{scriptHint(tr, s)}</span>}
                 </div>
                 <div className="script-desc">{s.description || s.body.split("\n")[0]}</div>
               </div>
               <div className="script-actions">
-                <button className="icon-btn" title="Изменить" onClick={() => edit(s)}>
+                <button className="icon-btn" title={tr("common.edit")} onClick={() => edit(s)}>
                   <IEdit size={13} />
                 </button>
-                <button className="icon-btn danger" title="Удалить" onClick={() => remove(s)}>
+                <button className="icon-btn danger" title={tr("common.delete")} onClick={() => remove(s)}>
                   <ITrash size={13} />
                 </button>
               </div>
@@ -170,7 +173,7 @@ export function ScriptsPanel({ paneId, target, onClose }: { paneId: string | nul
           ))
         )}
       </div>
-      <div className="toolwin-foot">{target ? <>Выполняется в: <b>{target}</b></> : "Нет активного терминала"}</div>
+      <div className="toolwin-foot">{target ? <>{tr("scripts.runsIn")} <b>{target}</b></> : tr("scripts.noTerminal")}</div>
     </aside>
   );
 }
@@ -179,6 +182,7 @@ export function ScriptsPanel({ paneId, target, onClose }: { paneId: string | nul
 
 function ScriptDialog({ script, onClose, onSaved }: { script: Script | null; onClose: () => void; onSaved: (s: Script) => void }) {
   const ui = useUi();
+  const tr = useT();
   const [s, setS] = useState<Script>(() => script ?? { id: "", name: "", description: "", body: "", mode: "terminal" });
   const [saving, setSaving] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -186,8 +190,8 @@ function ScriptDialog({ script, onClose, onSaved }: { script: Script | null; onC
   const vars = scriptVariables(s.body);
 
   const save = async () => {
-    if (!s.name.trim()) return ui.toast("Укажите название", "error");
-    if (!s.body.trim()) return ui.toast("Скрипт пустой", "error");
+    if (!s.name.trim()) return ui.toast(tr("scripts.nameRequired"), "error");
+    if (!s.body.trim()) return ui.toast(tr("scripts.emptyBody"), "error");
     setSaving(true);
     try {
       onSaved(await api.saveScript({ ...s, name: s.name.trim(), description: s.description?.trim() || null }));
@@ -213,53 +217,53 @@ function ScriptDialog({ script, onClose, onSaved }: { script: Script | null; onC
           }
         }}
       >
-        <h3>{script?.id ? "Изменить скрипт" : "Новый скрипт"}</h3>
+        <h3>{script?.id ? tr("scripts.editTitle") : tr("scripts.new")}</h3>
         <div className="grid2">
           <label className="field">
-            <span>Название</span>
-            <input ref={nameRef} value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} placeholder="Обновить систему" />
+            <span>{tr("scripts.name")}</span>
+            <input ref={nameRef} value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} placeholder={tr("scripts.namePlaceholder")} />
           </label>
           <label className="field">
-            <span>Описание</span>
-            <input value={s.description ?? ""} onChange={(e) => setS({ ...s, description: e.target.value })} placeholder="необязательно" />
+            <span>{tr("scripts.description")}</span>
+            <input value={s.description ?? ""} onChange={(e) => setS({ ...s, description: e.target.value })} placeholder={tr("scripts.optional")} />
           </label>
         </div>
         <div className="field">
-          <span>Как выполнять</span>
+          <span>{tr("scripts.mode")}</span>
           <div className="segmented">
             <button type="button" className={s.mode === "terminal" ? "on" : ""} onClick={() => setS({ ...s, mode: "terminal" })}>
-              Ввести в терминал
+              {tr("scripts.mode.terminal")}
             </button>
             <button type="button" className={s.mode === "bash" ? "on" : ""} onClick={() => setS({ ...s, mode: "bash" })}>
-              Как bash-скрипт
+              {tr("scripts.mode.bash")}
             </button>
           </div>
           <p className="hint" style={{ marginTop: 2 }}>
             {s.mode === "terminal"
-              ? "Команды вводятся в текущий shell, как будто вы их набрали: cd, export и т.п. сохраняются в сессии."
-              : "Скрипт целиком выполняется отдельным процессом bash: работают set -e, функции, циклы; состояние shell не меняется."}
+              ? tr("scripts.mode.terminalHint")
+              : tr("scripts.mode.bashHint")}
           </p>
         </div>
         {s.mode === "terminal" && (
           <div className="field">
-            <span>Запуск</span>
+            <span>{tr("scripts.runMode")}</span>
             <div className="segmented">
               <button type="button" className={!s.steps ? "on" : ""} onClick={() => setS({ ...s, steps: false })}>
-                Целиком
+                {tr("scripts.whole")}
               </button>
               <button type="button" className={s.steps ? "on" : ""} onClick={() => setS({ ...s, steps: true })}>
-                По шагам
+                {tr("scripts.steps")}
               </button>
             </div>
             <p className="hint" style={{ marginTop: 2 }}>
               {s.steps
-                ? "Отправляется первая команда, следующие — по кнопке «Следующая» в панели сессии (или Ctrl+Shift+Enter). Удобно, чтобы проверять результат каждой команды."
-                : "Все строки отправляются сами, одним блоком: запросы sudo и вопросы вроде [Y/n] не съедают следующие команды."}
+                ? tr("scripts.stepsHint")
+                : tr("scripts.wholeHint")}
             </p>
           </div>
         )}
         <label className="field">
-          <span>Команды</span>
+          <span>{tr("scripts.commands")}</span>
           <textarea
             className="code-input"
             spellCheck={false}
@@ -276,15 +280,16 @@ function ScriptDialog({ script, onClose, onSaved }: { script: Script | null; onC
           />
         </label>
         <p className="hint">
-          Переменные: <code>{"{{имя}}"}</code> или <code>{"{{имя:значение по умолчанию}}"}</code> — их спросят перед запуском.
-          {vars.length > 0 && <> Найдено: {vars.map((v) => v.name).join(", ")}.</>}
+          {tr("scripts.varsLabel")} <code>{`{{${tr("scripts.varName")}}}`}</code> {tr("scripts.varsOr")} <code>{`{{${tr("scripts.varName")}:${tr("scripts.varDefault")}}}`}</code>{" "}
+          {tr("scripts.varsHint")}
+          {vars.length > 0 && <> {tr("scripts.varsFound", { list: vars.map((v) => v.name).join(", ") })}</>}
         </p>
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>
-            Отмена
+            {tr("common.cancel")}
           </button>
           <button type="submit" className="btn btn-primary" disabled={saving}>
-            Сохранить
+            {tr("common.save")}
           </button>
         </div>
       </form>

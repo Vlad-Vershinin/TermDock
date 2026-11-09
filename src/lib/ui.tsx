@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { IChevronRight } from "../components/Icons";
+import { t as tr } from "./i18n";
 
 // ---------- toasts ----------
 
@@ -88,7 +89,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
 
   const confirm = useCallback(
     async (title: string, message?: ReactNode, danger?: boolean) =>
-      (await dialog({ title, message, danger, okText: danger ? "Удалить" : "OK" })) !== null,
+      (await dialog({ title, message, danger, okText: danger ? tr("common.delete") : tr("common.ok") })) !== null,
     [dialog],
   );
 
@@ -160,10 +161,10 @@ function DialogView({ spec, onClose }: { spec: DialogSpec; onClose: (r: DialogRe
         )}
         <div className="modal-actions">
           <button type="button" className="btn" onClick={() => onClose(null)}>
-            {spec.cancelText ?? "Отмена"}
+            {spec.cancelText ?? tr("common.cancel")}
           </button>
           <button type="submit" className={`btn ${spec.danger ? "btn-danger" : "btn-primary"}`} autoFocus={!spec.fields?.length}>
-            {spec.okText ?? "OK"}
+            {spec.okText ?? tr("common.ok")}
           </button>
         </div>
       </form>

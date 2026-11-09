@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, Settings } from "../lib/api";
 import { DEFAULT_SETTINGS, pickFolder, useSettings } from "../lib/settings";
 import { useUi } from "../lib/ui";
+import { LANGUAGE_NAMES, useT } from "../lib/i18n";
 
 const MONO_FONTS = [
   "JetBrains Mono",
@@ -46,6 +47,7 @@ function NumberInput({ value, min, max, step, onChange }: { value: number; min: 
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const ui = useUi();
+  const tr = useT();
   const { settings: s, update } = useSettings();
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => update({ [k]: v } as Partial<Settings>);
   // What an empty download folder means on this machine.
@@ -56,12 +58,13 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   }, [s.downloadDir]);
 
   const chooseDownloadDir = async () => {
-    const d = await pickFolder("Папка для загрузок", s.downloadDir || osDownloads);
+    const d = await pickFolder(tr("settings.downloadDir"), s.downloadDir || osDownloads);
     if (d) set("downloadDir", d);
   };
 
   const resetAll = async () => {
-    if (await ui.confirm("Сбросить настройки?", "Все параметры вернутся к значениям по умолчанию.")) update(DEFAULT_SETTINGS);
+    // The language stays: resetting shouldn't switch the UI to a language the user may not read.
+    if (await ui.confirm(tr("settings.resetTitle"), tr("settings.resetText"))) update({ ...DEFAULT_SETTINGS, language: s.language });
   };
 
   return (
@@ -74,20 +77,23 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         }}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
       >
-        <h3>Настройки</h3>
-        <p className="hint">Изменения применяются сразу.</p>
+        <h3>{tr("settings.title")}</h3>
+        <p className="hint">{tr("settings.applyNote")}</p>
 
-        <h4 className="settings-section">Интерфейс</h4>
+        <h4 className="settings-section">{tr("settings.interface")}</h4>
         <div className="grid2">
           <label className="field">
-            <span>Язык</span>
+            <span>{tr("settings.language")}</span>
             <select value={s.language} onChange={(e) => set("language", e.target.value as Settings["language"])}>
-              <option value="ru">Русский</option>
-              <option value="en">English</option>
+              {Object.entries(LANGUAGE_NAMES).map(([v, name]) => (
+                <option key={v} value={v}>
+                  {name}
+                </option>
+              ))}
             </select>
           </label>
           <label className="field">
-            <span>Масштаб интерфейса</span>
+            <span>{tr("settings.uiScale")}</span>
             <select value={s.uiScale} onChange={(e) => set("uiScale", Number(e.target.value))}>
               {[...new Set([...UI_SCALES, s.uiScale])]
                 .sort((a, b) => a - b)
@@ -100,20 +106,20 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </label>
         </div>
 
-        <h4 className="settings-section">Терминал</h4>
+        <h4 className="settings-section">{tr("settings.terminal")}</h4>
         <div className="grid2">
           <label className="field span2">
-            <span>Шрифт</span>
+            <span>{tr("settings.font")}</span>
             <div className="row">
               <input
                 list="td-mono-fonts"
                 value={s.termFontFamily}
                 onChange={(e) => set("termFontFamily", e.target.value)}
-                placeholder="По умолчанию (JetBrains Mono, Cascadia Mono, Consolas…)"
+                placeholder={tr("settings.fontPlaceholder")}
                 spellCheck={false}
               />
               <button type="button" className="btn" disabled={!s.termFontFamily} onClick={() => set("termFontFamily", "")}>
-                По умолчанию
+                {tr("settings.default")}
               </button>
             </div>
             <datalist id="td-mono-fonts">
@@ -121,15 +127,15 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 <option key={f} value={f} />
               ))}
             </datalist>
-            <span className="hint">Шрифт должен быть установлен в системе; если его нет, используется шрифт по умолчанию.</span>
+            <span className="hint">{tr("settings.fontHint")}</span>
           </label>
           <label className="field">
-            <span>Размер шрифта</span>
+            <span>{tr("settings.fontSize")}</span>
             <NumberInput value={s.termFontSize} min={8} max={32} onChange={(n) => set("termFontSize", Math.round(n))} />
-            <span className="hint">Также Ctrl+колесо мыши и Ctrl+= / Ctrl+- / Ctrl+0 в терминале.</span>
+            <span className="hint">{tr("settings.fontSizeHint")}</span>
           </label>
           <label className="field">
-            <span>Межстрочный интервал</span>
+            <span>{tr("settings.lineHeight")}</span>
             <select value={s.termLineHeight} onChange={(e) => set("termLineHeight", Number(e.target.value))}>
               {[...new Set([...LINE_HEIGHTS, s.termLineHeight])]
                 .sort((a, b) => a - b)
@@ -141,80 +147,79 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             </select>
           </label>
           <div className="field">
-            <span>Курсор</span>
+            <span>{tr("settings.cursor")}</span>
             <div className="segmented">
               {(
                 [
-                  ["block", "Блок"],
-                  ["bar", "Черта"],
-                  ["underline", "Подчёркивание"],
+                  ["block", "settings.cursor.block"],
+                  ["bar", "settings.cursor.bar"],
+                  ["underline", "settings.cursor.underline"],
                 ] as const
               ).map(([v, label]) => (
                 <button type="button" key={v} className={s.termCursorStyle === v ? "on" : ""} onClick={() => set("termCursorStyle", v)}>
-                  {label}
+                  {tr(label)}
                 </button>
               ))}
             </div>
           </div>
           <label className="field">
-            <span>История прокрутки, строк</span>
+            <span>{tr("settings.scrollback")}</span>
             <NumberInput value={s.termScrollback} min={0} max={1000000} step={1000} onChange={(n) => set("termScrollback", Math.round(n))} />
           </label>
           <label className="field span2">
-            <span>Правая кнопка мыши</span>
+            <span>{tr("settings.rightClick")}</span>
             <select value={s.termRightClick} onChange={(e) => set("termRightClick", e.target.value as Settings["termRightClick"])}>
-              <option value="copyPaste">Копировать выделенное, без выделения — вставить</option>
-              <option value="paste">Всегда вставлять</option>
-              <option value="none">Ничего не делать</option>
+              <option value="copyPaste">{tr("settings.rightClick.copyPaste")}</option>
+              <option value="paste">{tr("settings.rightClick.paste")}</option>
+              <option value="none">{tr("settings.rightClick.none")}</option>
             </select>
           </label>
         </div>
         <label className="check">
           <input type="checkbox" checked={s.termCursorBlink} onChange={(e) => set("termCursorBlink", e.target.checked)} />
-          Мигающий курсор
+          {tr("settings.cursorBlink")}
         </label>
         <label className="check">
           <input type="checkbox" checked={s.termCopyOnSelect} onChange={(e) => set("termCopyOnSelect", e.target.checked)} />
-          Копировать при выделении
+          {tr("settings.copyOnSelect")}
         </label>
 
-        <h4 className="settings-section">Файлы</h4>
+        <h4 className="settings-section">{tr("settings.files")}</h4>
         <label className="field">
-          <span>Папка для загрузок</span>
+          <span>{tr("settings.downloadDir")}</span>
           <div className="row">
-            <input value={s.downloadDir} onChange={(e) => set("downloadDir", e.target.value)} placeholder={osDownloads || "Папка «Загрузки»"} spellCheck={false} />
+            <input value={s.downloadDir} onChange={(e) => set("downloadDir", e.target.value)} placeholder={osDownloads || tr("settings.osDownloads")} spellCheck={false} />
             <button type="button" className="btn" onClick={chooseDownloadDir}>
-              Выбрать…
+              {tr("settings.choose")}
             </button>
           </div>
           <span className="hint">
-            Сюда сохраняет «Скачать в папку загрузок» из меню файлов сервера. У сервера может быть своя папка — в его настройках, раздел «Дополнительно».
-            Перетаскивание в панель «Этот компьютер» по-прежнему сохраняет в открытую там папку.
+            {tr("settings.downloadDirHint")}
           </span>
         </label>
         <label className="check">
           <input type="checkbox" checked={s.askDownloadDir} onChange={(e) => set("askDownloadDir", e.target.checked)} />
-          Спрашивать, куда сохранить, при каждой загрузке
+          {tr("settings.askDownloadDir")}
         </label>
         <label className="field">
-          <span>Панель «Этот компьютер» открывается</span>
+          <span>{tr("settings.localStart")}</span>
           <select value={s.localStartDir} onChange={(e) => set("localStartDir", e.target.value as Settings["localStartDir"])}>
-            <option value="last">в последней открытой папке</option>
-            <option value="downloads">в папке загрузок (своей у сервера, если задана)</option>
+            <option value="last">{tr("settings.localStart.last")}</option>
+            <option value="downloads">{tr("settings.localStart.downloads")}</option>
           </select>
         </label>
         <label className="check">
           <input type="checkbox" checked={s.showHidden} onChange={(e) => set("showHidden", e.target.checked)} />
-          Показывать скрытые файлы
+          {tr("settings.showHidden")}
         </label>
 
         <div className="modal-actions">
           <button type="button" className="btn" onClick={resetAll}>
-            Сбросить всё
+            {tr("settings.reset")}
           </button>
           <div className="spacer" />
           <button type="submit" className="btn btn-primary">
-            Готово
+            {tr("settings.done")}
           </button>
         </div>
       </form>

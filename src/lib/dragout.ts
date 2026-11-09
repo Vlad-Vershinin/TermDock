@@ -13,6 +13,7 @@
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { invoke } from "@tauri-apps/api/core";
 import { errorText } from "./api";
+import { t as tr } from "./i18n";
 import { joinPath } from "./paths";
 
 type Toast = (text: string, kind?: "info" | "success" | "error") => void;
@@ -55,7 +56,7 @@ async function startOsDrag(paths: string[], toast: Toast) {
     await startDrag({ item: paths, icon: DRAG_ICON, mode: "copy" }, end);
   } catch (e) {
     end();
-    toast(`Не удалось начать перетаскивание: ${errorText(e)}`, "error");
+    toast(tr("dragout.startFailed", { error: errorText(e) }), "error");
   }
 }
 
@@ -87,16 +88,16 @@ export async function dragOutRemote(o: {
   window.addEventListener("pointermove", onMove, true);
   window.addEventListener("keydown", onKey, true);
   try {
-    if (o.big) o.toast("Скачиваю во временную папку… Если отпустите кнопку раньше — перетащите снова, когда закончится");
+    if (o.big) o.toast(tr("dragout.downloading"));
     const dir = await invoke<string>("drag_temp_dir");
     if (!(await o.download(dir))) return; // the transfers panel already reported the error
     const paths = o.names.map((n) => joinPath(dir, n, false));
     cache.set(o.key, { paths, at: Date.now() });
     const held = !released && (await invoke<boolean>("mouse_button_held").catch(() => false));
     if (held) await startOsDrag(paths, o.toast);
-    else o.toast("Файлы скачаны — перетащите их снова, чтобы положить в папку", "success");
+    else o.toast(tr("dragout.downloaded"), "success");
   } catch (e) {
-    o.toast(`Не удалось подготовить файлы: ${errorText(e)}`, "error");
+    o.toast(tr("dragout.prepareFailed", { error: errorText(e) }), "error");
   } finally {
     pending = false;
     window.removeEventListener("pointerup", onUp, true);

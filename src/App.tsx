@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, errorText, Server } from "./lib/api";
 import { SettingsProvider } from "./lib/settings";
+import { useT } from "./lib/i18n";
 import { clearHover, dropAt, hoverAt } from "./lib/dnd";
 import { isDraggingOut, isOwnDragPath } from "./lib/dragout";
 import { TransfersPanel, TransfersProvider, useTransfers } from "./lib/transfers";
@@ -43,6 +44,7 @@ function readNumber(key: string, def: number) {
 
 function Main() {
   const ui = useUi();
+  const tr = useT();
   const { transfers } = useTransfers();
   const { scripts } = useScripts();
   const [servers, setServers] = useState<Server[]>([]);
@@ -149,7 +151,7 @@ function Main() {
     (tabId: string, dir: SplitDir, serverId?: string) => {
       const tab = tabsRef.current.find((t) => t.id === tabId);
       if (!tab) return;
-      if (tab.panes.length >= MAX_PANES) return ui.toast(`В одной вкладке — не больше ${MAX_PANES} панелей`, "error");
+      if (tab.panes.length >= MAX_PANES) return ui.toast(tr("app.maxPanes", { n: MAX_PANES }), "error");
       const fi = Math.max(0, tab.panes.findIndex((p) => p.id === tab.focus));
       const pane = newPane(serverId ?? tab.panes[fi].serverId);
       const panes = [...tab.panes];
@@ -237,7 +239,7 @@ function Main() {
   // ---------- servers ----------
 
   const deleteServer = async (s: Server) => {
-    if (!(await ui.confirm("Удалить сервер?", `«${s.name}» будет удалён из списка вместе с сохранённым паролем.`, true))) return;
+    if (!(await ui.confirm(tr("app.deleteServerTitle"), tr("app.deleteServerText", { name: s.name }), true))) return;
     try {
       await api.deleteServer(s.id);
       setServers((l) => l.filter((x) => x.id !== s.id));
@@ -373,9 +375,9 @@ function Main() {
   };
 
   const createFolder = async () => {
-    const name = (await ui.prompt("Новая папка", "Название папки"))?.trim();
+    const name = (await ui.prompt(tr("app.newFolder"), tr("common.folderName")))?.trim();
     if (!name) return;
-    if (folders.includes(name)) return ui.toast(`Папка «${name}» уже есть`, "error");
+    if (folders.includes(name)) return ui.toast(tr("app.folderExists", { name }), "error");
     try {
       setFolders(await api.saveFolders([...folders, name]));
     } catch (e) {
@@ -384,7 +386,7 @@ function Main() {
   };
 
   const renameFolder = async (from: string) => {
-    const to = (await ui.prompt("Переименовать папку", "Название папки", from))?.trim();
+    const to = (await ui.prompt(tr("app.renameFolder"), tr("common.folderName"), from))?.trim();
     if (!to || to === from) return;
     try {
       await api.renameFolder(from, to);
@@ -396,8 +398,8 @@ function Main() {
 
   const deleteFolder = async (name: string) => {
     const n = servers.filter((s) => s.group?.trim() === name).length;
-    const msg = n ? `Серверы из неё (${n}) останутся в списке, без папки.` : undefined;
-    if (!(await ui.confirm(`Удалить папку «${name}»?`, msg, true))) return;
+    const msg = n ? tr("app.deleteFolderText", { n }) : undefined;
+    if (!(await ui.confirm(tr("app.deleteFolderTitle", { name }), msg, true))) return;
     try {
       await api.deleteFolder(name);
       await reloadServers();
@@ -425,12 +427,12 @@ function Main() {
   const tabMenu = (e: React.MouseEvent, id: string) => {
     setActive(id);
     ui.menu(e, [
-      { label: "Дублировать в новой вкладке", icon: <ICopy size={13} />, hint: "Ctrl+Shift+D", onClick: () => duplicateTab(id) },
-      { label: "Разделить вправо", icon: <ISplitRight size={13} />, hint: "Alt+Shift+=", onClick: () => splitTab(id, "row") },
-      { label: "Разделить вниз", icon: <ISplitDown size={13} />, hint: "Alt+Shift+-", onClick: () => splitTab(id, "column") },
+      { label: tr("app.duplicateTab"), icon: <ICopy size={13} />, hint: "Ctrl+Shift+D", onClick: () => duplicateTab(id) },
+      { label: tr("app.splitRight"), icon: <ISplitRight size={13} />, hint: "Alt+Shift+=", onClick: () => splitTab(id, "row") },
+      { label: tr("app.splitDown"), icon: <ISplitDown size={13} />, hint: "Alt+Shift+-", onClick: () => splitTab(id, "column") },
       "-",
-      { label: "Закрыть вкладку", icon: <IClose size={13} />, onClick: () => closeTab(id) },
-      { label: "Закрыть другие вкладки", disabled: tabs.length < 2, onClick: () => closeOtherTabs(id) },
+      { label: tr("titlebar.closeTab"), icon: <IClose size={13} />, onClick: () => closeTab(id) },
+      { label: tr("app.closeOtherTabs"), disabled: tabs.length < 2, onClick: () => closeOtherTabs(id) },
     ]);
   };
 
@@ -441,7 +443,7 @@ function Main() {
       for (const s of list) items.push({ label: s.name, icon: <IPlay size={13} />, hint: s.host, onClick: () => openSession(s, true) });
     }
     if (items.length) items.push("-");
-    items.push({ label: "Добавить сервер…", icon: <IPlus size={13} />, hint: "Ctrl+Shift+N", onClick: () => addServer() });
+    items.push({ label: tr("app.addServerMenu"), icon: <IPlus size={13} />, hint: "Ctrl+Shift+N", onClick: () => addServer() });
     ui.menu(e.currentTarget, items);
   };
 
@@ -456,27 +458,27 @@ function Main() {
         onNewTab={newTabMenu}
         left={
           <>
-            <button className={`tb-brand ${active === null ? "on" : ""}`} onClick={() => setActive(null)} title="Главная">
+            <button className={`tb-brand ${active === null ? "on" : ""}`} onClick={() => setActive(null)} title={tr("app.home")}>
               <img src="/logo.svg" alt="" />
               <span>TermDock</span>
             </button>
-            <button className={`icon-btn tb-tool ${sidebarOpen ? "on" : ""}`} onClick={() => toggleSidebar()} title="Панель серверов (Alt+1)">
+            <button className={`icon-btn tb-tool ${sidebarOpen ? "on" : ""}`} onClick={() => toggleSidebar()} title={tr("app.sidebarHint")}>
               <ISidebar size={15} />
             </button>
-            <button className={`icon-btn tb-tool ${active === null ? "on" : ""}`} onClick={() => setActive(null)} title="Все серверы">
+            <button className={`icon-btn tb-tool ${active === null ? "on" : ""}`} onClick={() => setActive(null)} title={tr("app.allServers")}>
               <IHome size={15} />
             </button>
           </>
         }
         right={
           <>
-            <button className={`tb-btn ${scriptsOpen ? "on" : ""}`} onClick={toggleScripts} title="Скрипты (Alt+2)">
-              <IScript size={14} /> Скрипты{scripts.length ? <span className="muted">{scripts.length}</span> : null}
+            <button className={`tb-btn ${scriptsOpen ? "on" : ""}`} onClick={toggleScripts} title={tr("app.scriptsHint")}>
+              <IScript size={14} /> {tr("app.scripts")}{scripts.length ? <span className="muted">{scripts.length}</span> : null}
             </button>
-            <button className={`tb-btn ${showTransfers ? "on" : ""}`} onClick={() => setShowTransfers(!showTransfers)} title="Передачи файлов">
-              <ITransfer size={14} /> Передачи{running ? <span className="badge">{running}</span> : null}
+            <button className={`tb-btn ${showTransfers ? "on" : ""}`} onClick={() => setShowTransfers(!showTransfers)} title={tr("app.transfersHint")}>
+              <ITransfer size={14} /> {tr("transfers.title")}{running ? <span className="badge">{running}</span> : null}
             </button>
-            <button className={`icon-btn tb-tool ${settingsOpen ? "on" : ""}`} onClick={() => setSettingsOpen(true)} title="Настройки (Ctrl+,)">
+            <button className={`icon-btn tb-tool ${settingsOpen ? "on" : ""}`} onClick={() => setSettingsOpen(true)} title={tr("app.settingsHint")}>
               <ISettings size={15} />
             </button>
           </>
@@ -543,32 +545,33 @@ function Home({
   onConnect: (s: Server) => void;
   onAdd: () => void;
 }) {
+  const tr = useT();
   const grouped = groupServers(servers, "", folders);
   return (
     <div className="home">
       <div className="home-inner">
         <div className="home-head">
           <div>
-            <h1>Серверы</h1>
-            <p className="muted">Выберите сервер, чтобы открыть терминал и файловую панель.</p>
+            <h1>{tr("home.title")}</h1>
+            <p className="muted">{tr("home.subtitle")}</p>
           </div>
           <button className="btn btn-primary" onClick={onAdd}>
-            <IPlus /> Добавить сервер
+            <IPlus /> {tr("home.addServer")}
           </button>
         </div>
         {servers.length === 0 ? (
           <div className="home-empty">
             <img src="/logo.svg" alt="" />
-            <h2>Добро пожаловать в TermDock</h2>
-            <p className="muted">Добавьте первый сервер — и подключайтесь к нему в один клик.</p>
+            <h2>{tr("home.welcome")}</h2>
+            <p className="muted">{tr("home.welcomeText")}</p>
             <button className="btn btn-primary" onClick={onAdd}>
-              Добавить сервер
+              {tr("home.addServer")}
             </button>
           </div>
         ) : (
           grouped.map(([group, list]) => (
             <section key={group || "_"}>
-              {grouped.length > 1 && <h4 className="home-group">{group || "Без группы"}</h4>}
+              {grouped.length > 1 && <h4 className="home-group">{group || tr("home.noGroup")}</h4>}
               <div className="cards">
                 {list.map((s) => {
                   const st = states[s.id];
@@ -586,15 +589,15 @@ function Home({
                       <div className="card-meta">
                         {s.auth === "key" ? (
                           <>
-                            <IKey size={12} /> ключ
+                            <IKey size={12} /> {tr("home.authKey")}
                           </>
                         ) : s.auth === "agent" ? (
                           <>
-                            <IKey size={12} /> агент
+                            <IKey size={12} /> {tr("home.authAgent")}
                           </>
                         ) : (
                           <>
-                            <ILock size={12} /> {s.hasSecret ? "пароль сохранён" : "пароль"}
+                            <ILock size={12} /> {s.hasSecret ? tr("home.passwordSaved") : tr("home.password")}
                           </>
                         )}
                       </div>
@@ -606,16 +609,16 @@ function Home({
           ))
         )}
         <div className="shortcuts">
-          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> поиск</span>
-          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> новый сервер</span>
-          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> дублировать вкладку</span>
-          <span><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>=</kbd> / <kbd>-</kbd> разделить вправо / вниз</span>
-          <span><kbd>Alt</kbd>+<kbd>←→</kbd> переход между панелями</span>
-          <span><kbd>Alt</kbd>+<kbd>1</kbd> / <kbd>2</kbd> серверы / скрипты</span>
-          <span><kbd>Ctrl</kbd>+<kbd>Tab</kbd> след. вкладка</span>
-          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C/V</kbd> копировать/вставить</span>
-          <span><kbd>Ctrl</kbd>+<kbd>,</kbd> настройки</span>
-          <span>ПКМ по файлу, вкладке или серверу — меню действий</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> {tr("home.kSearch")}</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> {tr("home.kNewServer")}</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> {tr("home.kDuplicate")}</span>
+          <span><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>=</kbd> / <kbd>-</kbd> {tr("home.kSplit")}</span>
+          <span><kbd>Alt</kbd>+<kbd>←→</kbd> {tr("home.kPanes")}</span>
+          <span><kbd>Alt</kbd>+<kbd>1</kbd> / <kbd>2</kbd> {tr("home.kSidebars")}</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Tab</kbd> {tr("home.kNextTab")}</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C/V</kbd> {tr("home.kCopyPaste")}</span>
+          <span><kbd>Ctrl</kbd>+<kbd>,</kbd> {tr("home.kSettings")}</span>
+          <span>{tr("home.kContextMenu")}</span>
         </div>
       </div>
     </div>

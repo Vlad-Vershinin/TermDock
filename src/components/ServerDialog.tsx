@@ -6,6 +6,7 @@ import { useUi } from "../lib/ui";
 import { useScripts } from "./Scripts";
 import { ForwardFields, forwardText, KIND_HINTS, newForward } from "./Ports";
 import { IClose, IPlus } from "./Icons";
+import { Key, useT } from "../lib/i18n";
 
 export const COLORS = ["#58a6ff", "#3fb950", "#d29922", "#ff7b72", "#bc8cff", "#39c5cf", "#f778ba", "#8b949e"];
 
@@ -41,6 +42,7 @@ function goesThrough(s: Server, id: string, all: Server[], depth = 0): boolean {
 
 export function ServerDialog({ server, servers, folders, folder, onClose, onSaved }: Props) {
   const ui = useUi();
+  const tr = useT();
   const { settings } = useSettings();
   const { scripts, edit: editScript } = useScripts();
   const [s, setS] = useState<Server>(() => ({ ...empty, group: folder ?? "", ...server }));
@@ -76,13 +78,13 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
   const folderOptions = [...new Set([...folders, ...extraFolders, ...(s.group?.trim() ? [s.group.trim()] : [])])];
 
   const pickKey = async (apply: (path: string) => void) => {
-    const f = await openDialog({ title: "Приватный ключ SSH", multiple: false });
+    const f = await openDialog({ title: tr("server.pickKey"), multiple: false });
     if (typeof f === "string") apply(f);
   };
 
   const pickFolder = async (v: string) => {
     if (v !== "\0new") return set("group", v);
-    const name = (await ui.prompt("Новая папка", "Название папки"))?.trim();
+    const name = (await ui.prompt(tr("app.newFolder"), tr("common.folderName")))?.trim();
     if (!name) return;
     setExtraFolders((l) => [...l, name]);
     set("group", name);
@@ -98,10 +100,10 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
   };
 
   const save = async (connect: boolean) => {
-    if (jumpMode === "saved" && !jump.serverId) return ui.toast("Выберите сервер-посредник", "error");
-    if (jumpMode === "custom" && !jump.host.trim()) return ui.toast("Укажите хост сервера-посредника", "error");
+    if (jumpMode === "saved" && !jump.serverId) return ui.toast(tr("server.chooseJump"), "error");
+    if (jumpMode === "custom" && !jump.host.trim()) return ui.toast(tr("server.jumpHostRequired"), "error");
     const badFw = (s.forwards ?? []).find((f) => (f.kind !== "remote" && !f.bindPort) || (f.kind !== "dynamic" && (!f.destHost.trim() || !f.destPort)));
-    if (badFw) return ui.toast(`Проброс портов: укажите порт и адрес назначения (${forwardText(badFw)})`, "error");
+    if (badFw) return ui.toast(tr("server.badForward", { fw: forwardText(badFw) }), "error");
     setBusy(true);
     try {
       const p = parseHost(s);
@@ -137,40 +139,39 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
         }}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
       >
-        <h3>{server?.id ? "Редактировать сервер" : "Новый сервер"}</h3>
+        <h3>{server?.id ? tr("server.editTitle") : tr("session.newServer")}</h3>
         <div className="grid2">
           <label className="field span2">
-            <span>Хост</span>
-            <input autoFocus value={s.host} onChange={(e) => set("host", e.target.value)} onBlur={() => setS(parseHost)} placeholder="192.168.1.10 или user@example.com:2222" spellCheck={false} />
+            <span>{tr("server.host")}</span>
+            <input autoFocus value={s.host} onChange={(e) => set("host", e.target.value)} onBlur={() => setS(parseHost)} placeholder={tr("server.hostPlaceholder")} spellCheck={false} />
             {sshCfg && (sshCfg.hostname || sshCfg.port !== (Number(s.port) || 22)) && (
               <span className="hint">
-                Из ~/.ssh/config: адрес {sshCfg.hostname ?? parseHost(s).host.trim()}
-                {sshCfg.port !== 22 ? `:${sshCfg.port}` : ""}
+                {tr("server.fromConfigAddr", { addr: `${sshCfg.hostname ?? parseHost(s).host.trim()}${sshCfg.port !== 22 ? `:${sshCfg.port}` : ""}` })}
               </span>
             )}
           </label>
           <label className="field">
-            <span>Пользователь</span>
+            <span>{tr("server.user")}</span>
             <input value={s.username} onChange={(e) => set("username", e.target.value)} spellCheck={false} />
           </label>
           <label className="field">
-            <span>Порт</span>
+            <span>{tr("common.port")}</span>
             <input type="number" min={1} max={65535} value={s.port} onChange={(e) => set("port", Number(e.target.value))} />
           </label>
           <label className="field">
-            <span>Название</span>
+            <span>{tr("scripts.name")}</span>
             <input value={s.name} onChange={(e) => set("name", e.target.value)} placeholder={s.host || "prod-web-1"} />
           </label>
           <label className="field">
-            <span>Папка</span>
+            <span>{tr("server.folder")}</span>
             <select value={s.group?.trim() ?? ""} onChange={(e) => pickFolder(e.target.value)}>
-              <option value="">Без папки</option>
+              <option value="">{tr("sidebar.noFolder")}</option>
               {folderOptions.map((g) => (
                 <option key={g} value={g}>
                   {g}
                 </option>
               ))}
-              <option value={"\0new"}>+ Новая папка…</option>
+              <option value={"\0new"}>+ {tr("sidebar.newFolderMenu")}</option>
             </select>
           </label>
         </div>
@@ -179,75 +180,78 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
 
         {isKey && (
           <label className="field">
-            <span>Приватный ключ</span>
+            <span>{tr("server.privateKey")}</span>
             <div className="row">
               <input value={s.keyPath ?? ""} onChange={(e) => set("keyPath", e.target.value)} placeholder="~/.ssh/id_ed25519" spellCheck={false} />
               <button type="button" className="btn" onClick={() => pickKey((f) => set("keyPath", f))}>
-                Обзор…
+                {tr("server.browse")}
               </button>
             </div>
           </label>
         )}
         {s.auth === "agent" ? (
-          <p className="hint">{AGENT_HINT}</p>
+          <p className="hint">{tr("server.agentHint")}</p>
         ) : (
           <>
             <label className="field">
-              <span>{isKey ? "Passphrase ключа (если есть)" : "Пароль"}</span>
+              <span>{isKey ? tr("server.keyPassphrase") : tr("session.password")}</span>
               <input
                 type="password"
                 value={secret}
                 disabled={forget}
                 onChange={(e) => setSecret(e.target.value)}
-                placeholder={s.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
+                placeholder={s.hasSecret ? tr("server.secretSaved") : isKey ? tr("scripts.optional") : tr("server.secretAsk")}
               />
             </label>
             {s.hasSecret && (
               <label className="check">
                 <input type="checkbox" checked={forget} onChange={(e) => setForget(e.target.checked)} />
-                Забыть сохранённый {isKey ? "passphrase" : "пароль"}
+                {isKey ? tr("server.forgetPassphrase") : tr("server.forgetPassword")}
               </label>
             )}
-            <p className="hint">Пароли хранятся в системном хранилище (Windows Credential Manager / GNOME Keyring / KWallet), не в файле настроек.</p>
+            <p className="hint">{tr("server.keychainNote")}</p>
           </>
         )}
 
         <details open={jumpOpen}>
-          <summary>Подключение через сервер-посредник{jumpMode !== "none" ? " — включено" : ""}</summary>
-          <p className="hint">Как ssh -J: сначала подключение к серверу-посреднику (bastion), через него — к этому серверу.</p>
+          <summary>
+            {tr("server.jumpSection")}
+            {jumpMode !== "none" ? ` — ${tr("server.enabled")}` : ""}
+          </summary>
+          <p className="hint">{tr("server.jumpHint")}</p>
           {sshCfg?.error && <p className="hint err">~/.ssh/config: {sshCfg.error}</p>}
           {sshCfg && sshCfg.jumps.length > 0 && (
             <p className="hint" title={sshCfg.jumps.map((j) => `${j.alias}: ${j.label}`).join("\n")}>
-              Из ~/.ssh/config: через {configJumpText(sshCfg)}
-              {jumpMode === "none" ? " — будет использовано при подключении «Напрямую»." : " — не используется: настройка посредника здесь важнее."}
+              {tr("server.fromConfigVia", { via: configJumpText(sshCfg) })}
+              {jumpMode === "none" ? tr("server.configJumpUsed") : tr("server.configJumpIgnored")}
             </p>
           )}
           <div className="segmented">
             {(
               [
-                ["none", "Напрямую"],
-                ["saved", "Сохранённый сервер"],
-                ["custom", "Другой сервер"],
+                ["none", "server.jump.none"],
+                ["saved", "server.jump.saved"],
+                ["custom", "server.jump.custom"],
               ] as const
             ).map(([m, label]) => (
               <button type="button" key={m} className={jumpMode === m ? "on" : ""} onClick={() => setJumpMode(m)}>
-                {label}
+                {tr(label)}
               </button>
             ))}
           </div>
           {jumpMode === "saved" && (
             <label className="field">
-              <span>Сервер-посредник</span>
+              <span>{tr("server.jumpServer")}</span>
               <select value={jump.serverId ?? ""} onChange={(e) => setJ("serverId", e.target.value || null)}>
-                <option value="">— выберите —</option>
+                <option value="">{tr("server.choose")}</option>
                 {jumpCandidates.map((x) => (
                   <option key={x.id} value={x.id}>
                     {x.name} ({x.username}@{x.host}
-                    {x.port !== 22 ? `:${x.port}` : ""}){x.jump ? " — сам через посредника" : ""}
+                    {x.port !== 22 ? `:${x.port}` : ""}){x.jump ? ` — ${tr("server.itselfViaJump")}` : ""}
                   </option>
                 ))}
               </select>
-              {jumpCandidates.length === 0 && <span className="hint">Нет других сохранённых серверов — выберите «Другой сервер».</span>}
+              {jumpCandidates.length === 0 && <span className="hint">{tr("server.noJumpCandidates")}</span>}
             </label>
           )}
           {jumpMode === "custom" && (
@@ -265,25 +269,27 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
         </details>
 
         <details open={!!server?.connectScript}>
-          <summary>Скрипт при подключении{s.connectScript ? " — включён" : ""}</summary>
+          <summary>
+            {tr("server.connectScript")}
+            {s.connectScript ? ` — ${tr("server.on")}` : ""}
+          </summary>
           <label className="field">
-            <span>Выполнять после каждого подключения</span>
+            <span>{tr("server.connectScriptRun")}</span>
             <select value={s.connectScript ?? ""} onChange={(e) => set("connectScript", e.target.value || null)}>
-              <option value="">— не выполнять —</option>
+              <option value="">{tr("server.dontRun")}</option>
               {scripts.map((x) => (
                 <option key={x.id} value={x.id}>
                   {x.name}
-                  {x.mode === "bash" ? " (bash)" : x.steps ? " (по шагам)" : ""}
+                  {x.mode === "bash" ? " (bash)" : x.steps ? ` (${tr("scripts.stepsTag")})` : ""}
                 </option>
               ))}
-              {s.connectScript && !scripts.some((x) => x.id === s.connectScript) && <option value={s.connectScript}>(скрипт удалён)</option>}
+              {s.connectScript && !scripts.some((x) => x.id === s.connectScript) && <option value={s.connectScript}>({tr("server.scriptDeleted")})</option>}
             </select>
           </label>
           <p className="hint">
-            Скрипт запускается в терминале, когда сервер закончит выводить приветствие, — например <code>sudo apt update</code>. Скрипты
-            создаются в панели «Скрипты» (Alt+2){" "}
+            {tr("server.connectScriptHint1")} <code>sudo apt update</code>. {tr("server.connectScriptHint2")}{" "}
             <button type="button" className="link-btn" onClick={() => editScript(null)}>
-              или прямо сейчас
+              {tr("server.createNow")}
             </button>
             .
           </p>
@@ -291,19 +297,20 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
 
         <details open={!!server?.forwards?.length}>
           <summary>
-            Проброс портов{s.forwards?.length ? ` — ${s.forwards.filter((f) => f.enabled).length} из ${s.forwards.length}` : ""}
+            {tr("ports.title")}
+            {s.forwards?.length ? ` — ${tr("server.fwCount", { on: s.forwards.filter((f) => f.enabled).length, n: s.forwards.length })}` : ""}
           </summary>
           <p className="hint">
-            Запускается при каждом подключении и работает, пока сессия открыта. {KIND_HINTS.local} {KIND_HINTS.remote} {KIND_HINTS.dynamic}
+            {tr("server.fwHint")} {tr(KIND_HINTS.local)} {tr(KIND_HINTS.remote)} {tr(KIND_HINTS.dynamic)}
           </p>
           {(s.forwards ?? []).map((f, i) => (
             <div key={f.id} className="fw-edit">
               <div className="fw-edit-head">
-                <label className="check small" title="Запускать при подключении">
+                <label className="check small" title={tr("server.fwEnabled")}>
                   <input type="checkbox" checked={f.enabled} onChange={(e) => setForward(i, { ...f, enabled: e.target.checked })} />
                   {forwardText(f)}
                 </label>
-                <button type="button" className="icon-btn" title="Удалить проброс" onClick={() => set("forwards", s.forwards!.filter((_, j) => j !== i))}>
+                <button type="button" className="icon-btn" title={tr("server.fwDelete")} onClick={() => set("forwards", s.forwards!.filter((_, j) => j !== i))}>
                   <IClose size={13} />
                 </button>
               </div>
@@ -311,40 +318,40 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
             </div>
           ))}
           <button type="button" className="link-btn fw-add-btn" onClick={() => set("forwards", [...(s.forwards ?? []), newForward()])}>
-            <IPlus size={12} /> Добавить проброс
+            <IPlus size={12} /> {tr("server.fwAdd")}
           </button>
         </details>
 
         <details>
-          <summary>Дополнительно</summary>
+          <summary>{tr("server.advanced")}</summary>
           <label className="field">
-            <span>Папка на сервере для файловой панели</span>
-            <input value={s.remoteDir ?? ""} onChange={(e) => set("remoteDir", e.target.value)} placeholder="домашняя папка" spellCheck={false} />
+            <span>{tr("server.remoteDir")}</span>
+            <input value={s.remoteDir ?? ""} onChange={(e) => set("remoteDir", e.target.value)} placeholder={tr("server.homeDir")} spellCheck={false} />
           </label>
           <label className="field">
-            <span>Папка для загрузок с этого сервера</span>
+            <span>{tr("server.downloadDir")}</span>
             <div className="row">
               <input
                 value={s.downloadDir ?? ""}
                 onChange={(e) => set("downloadDir", e.target.value)}
-                placeholder={settings.downloadDir ? `как в настройках: ${settings.downloadDir}` : "как в настройках: папка «Загрузки»"}
+                placeholder={tr("server.asInSettings", { dir: settings.downloadDir || tr("settings.osDownloads") })}
                 spellCheck={false}
               />
               <button
                 type="button"
                 className="btn"
                 onClick={async () => {
-                  const d = await pickLocalFolder("Папка для загрузок с этого сервера", s.downloadDir || settings.downloadDir);
+                  const d = await pickLocalFolder(tr("server.downloadDir"), s.downloadDir || settings.downloadDir);
                   if (d) set("downloadDir", d);
                 }}
               >
-                Выбрать…
+                {tr("settings.choose")}
               </button>
             </div>
-            <span className="hint">Для «Скачать в папку загрузок» в меню файлов сервера.</span>
+            <span className="hint">{tr("server.downloadDirHint")}</span>
           </label>
           <div className="field">
-            <span>Цвет</span>
+            <span>{tr("server.color")}</span>
             <div className="colors">
               {COLORS.map((c) => (
                 <button type="button" key={c} className={`color ${s.color === c ? "on" : ""}`} style={{ background: c }} onClick={() => set("color", c)} />
@@ -355,13 +362,13 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
 
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>
-            Отмена
+            {tr("common.cancel")}
           </button>
           <button type="submit" className="btn" disabled={busy || !s.host.trim()}>
-            Сохранить
+            {tr("common.save")}
           </button>
           <button type="button" className="btn btn-primary" disabled={busy || !s.host.trim()} onClick={() => save(true)}>
-            Сохранить и подключиться
+            {tr("server.saveConnect")}
           </button>
         </div>
       </form>
@@ -380,53 +387,54 @@ function JumpFields(p: {
   setForget: (v: boolean) => void;
 }) {
   const { jump, set } = p;
+  const tr = useT();
   const isKey = jump.auth === "key";
   return (
     <>
       <div className="grid2">
         <label className="field span2">
-          <span>Хост посредника</span>
-          <input value={jump.host} onChange={(e) => set("host", e.target.value)} onBlur={p.onBlurHost} placeholder="bastion.example.com или user@host:port" spellCheck={false} />
+          <span>{tr("server.jumpHost")}</span>
+          <input value={jump.host} onChange={(e) => set("host", e.target.value)} onBlur={p.onBlurHost} placeholder={tr("server.jumpHostPlaceholder")} spellCheck={false} />
         </label>
         <label className="field">
-          <span>Пользователь</span>
+          <span>{tr("server.user")}</span>
           <input value={jump.username} onChange={(e) => set("username", e.target.value)} spellCheck={false} />
         </label>
         <label className="field">
-          <span>Порт</span>
+          <span>{tr("common.port")}</span>
           <input type="number" min={1} max={65535} value={jump.port} onChange={(e) => set("port", Number(e.target.value))} />
         </label>
       </div>
       <AuthSwitch value={jump.auth} onChange={(m) => set("auth", m)} />
       {isKey && (
         <label className="field">
-          <span>Приватный ключ посредника</span>
+          <span>{tr("server.jumpPrivateKey")}</span>
           <div className="row">
             <input value={jump.keyPath ?? ""} onChange={(e) => set("keyPath", e.target.value)} placeholder="~/.ssh/id_ed25519" spellCheck={false} />
             <button type="button" className="btn" onClick={p.onPickKey}>
-              Обзор…
+              {tr("server.browse")}
             </button>
           </div>
         </label>
       )}
       {jump.auth === "agent" ? (
-        <p className="hint">{AGENT_HINT}</p>
+        <p className="hint">{tr("server.agentHint")}</p>
       ) : (
         <>
           <label className="field">
-            <span>{isKey ? "Passphrase ключа посредника (если есть)" : "Пароль посредника"}</span>
+            <span>{isKey ? tr("server.jumpKeyPassphrase") : tr("server.jumpPassword")}</span>
             <input
               type="password"
               value={p.secret}
               disabled={p.forget}
               onChange={(e) => p.setSecret(e.target.value)}
-              placeholder={jump.hasSecret ? "•••••• сохранён — оставьте пустым, чтобы не менять" : isKey ? "необязательно" : "оставьте пустым, чтобы спрашивать при подключении"}
+              placeholder={jump.hasSecret ? tr("server.secretSaved") : isKey ? tr("scripts.optional") : tr("server.secretAsk")}
             />
           </label>
           {jump.hasSecret && (
             <label className="check">
               <input type="checkbox" checked={p.forget} onChange={(e) => p.setForget(e.target.checked)} />
-              Забыть сохранённый {isKey ? "passphrase" : "пароль"} посредника
+              {isKey ? tr("server.jumpForgetPassphrase") : tr("server.jumpForgetPassword")}
             </label>
           )}
         </>
@@ -435,21 +443,19 @@ function JumpFields(p: {
   );
 }
 
-const AGENT_HINT =
-  "Ключи берутся из запущенного SSH-агента (ssh-agent; в Windows — служба OpenSSH Authentication Agent или Pageant). Пароль не нужен — добавьте ключ в агент командой ssh-add.";
-
-const AUTH_LABELS: [AuthMethod, string][] = [
-  ["password", "Пароль"],
-  ["key", "SSH-ключ"],
-  ["agent", "SSH-агент"],
+const AUTH_LABELS: [AuthMethod, Key][] = [
+  ["password", "session.password"],
+  ["key", "server.auth.key"],
+  ["agent", "server.auth.agent"],
 ];
 
 function AuthSwitch({ value, onChange }: { value: AuthMethod; onChange: (m: AuthMethod) => void }) {
+  const tr = useT();
   return (
     <div className="segmented">
       {AUTH_LABELS.map(([m, label]) => (
         <button type="button" key={m} className={value === m ? "on" : ""} onClick={() => onChange(m)}>
-          {label}
+          {tr(label)}
         </button>
       ))}
     </div>

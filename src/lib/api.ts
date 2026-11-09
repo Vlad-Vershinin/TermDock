@@ -72,7 +72,7 @@ export interface SshConfigInfo {
   error?: string | null;
 }
 
-/** "через bastion → gw" for a ProxyJump chain from ~/.ssh/config. */
+/** "bastion → gw" for a ProxyJump chain from ~/.ssh/config. */
 export const configJumpText = (c: SshConfigInfo) => c.jumps.map((j) => j.alias).join(" → ");
 
 export interface Entry {
@@ -169,6 +169,7 @@ export const api = {
 
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (value: Settings) => invoke<Settings>("save_settings", { value }),
+  settingsFirstRun: () => invoke<boolean>("settings_first_run"),
   /** Resolved downloads folder: the server's own, else the global one, else the OS Downloads (`~` expanded). */
   downloadDir: (serverDir?: string | null, global?: string) => invoke<string>("download_dir", { serverDir: serverDir ?? null, global: global ?? null }),
   openLocalPath: (path: string) => invoke<void>("open_local_path", { path }),

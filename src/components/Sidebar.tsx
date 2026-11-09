@@ -5,6 +5,7 @@ import { beginDrag, DropDetail } from "../lib/dnd";
 import { MenuItem, useUi } from "../lib/ui";
 import { ICopy, IEdit, IFolder, IFolderOut, IFolderPlus, IPlay, IPlus, ISplitDown, ISplitRight, ITrash } from "./Icons";
 import { SessionStatus } from "./SessionView";
+import { Key, useT } from "../lib/i18n";
 
 /** Aggregated connection state of all panes opened for a server. */
 export interface ServerState {
@@ -55,15 +56,15 @@ export function groupServers(servers: Server[], query: string, folders: string[]
   return [...groups.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
-const STATUS_TEXT: Record<ServerState["status"], string> = {
-  idle: "не подключён",
-  connecting: "подключение…",
-  connected: "подключён",
-  closed: "отключён",
-  error: "ошибка",
+const STATUS_TEXT: Record<ServerState["status"], Key> = {
+  idle: "sidebar.status.idle",
+  connecting: "sidebar.status.connecting",
+  connected: "sidebar.status.connected",
+  closed: "sidebar.status.closed",
+  error: "sidebar.status.error",
 };
 
-const AUTH_TEXT: Record<string, string> = { password: "пароль", key: "ключ", agent: "агент" };
+const AUTH_TEXT: Record<string, Key> = { password: "home.password", key: "home.authKey", agent: "home.authAgent" };
 
 export const MIN_SIDEBAR = 200;
 export const MAX_SIDEBAR = 560;
@@ -71,6 +72,7 @@ export const MAX_SIDEBAR = 560;
 export function Sidebar(props: Props) {
   const { servers, folders, states, width, onConnect, onSplitOpen, onAdd, onEdit, onDelete, onAddFolder, onRenameFolder, onDeleteFolder, onMove, onResize } = props;
   const ui = useUi();
+  const tr = useT();
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(JSON.parse(localStorage.getItem("td.collapsed") ?? "[]")));
   const listRef = useRef<HTMLDivElement>(null);
@@ -125,7 +127,7 @@ export function Sidebar(props: Props) {
   };
 
   const moveToNewFolder = async (s: Server) => {
-    const name = (await ui.prompt("Новая папка", "Название папки"))?.trim();
+    const name = (await ui.prompt(tr("app.newFolder"), tr("common.folderName")))?.trim();
     if (name) onMove([s.id], name);
   };
 
@@ -137,25 +139,25 @@ export function Sidebar(props: Props) {
       .filter((f) => f !== current)
       .map((f) => ({ label: f, icon: <IFolder size={13} />, onClick: () => onMove([s.id], f) }));
     ui.menu(e, [
-      { label: "Подключиться", icon: <IPlay size={13} />, onClick: () => onConnect(s) },
-      { label: "Открыть в новой вкладке", icon: <ICopy size={13} />, hint: "Ctrl+клик", onClick: () => onConnect(s, true) },
-      { label: "Открыть справа в текущей вкладке", icon: <ISplitRight size={13} />, disabled: !onSplitOpen, onClick: () => onSplitOpen?.(s, "row") },
-      { label: "Открыть снизу в текущей вкладке", icon: <ISplitDown size={13} />, disabled: !onSplitOpen, onClick: () => onSplitOpen?.(s, "column") },
+      { label: tr("sidebar.connect"), icon: <IPlay size={13} />, onClick: () => onConnect(s) },
+      { label: tr("sidebar.openNewTab"), icon: <ICopy size={13} />, hint: tr("sidebar.ctrlClick"), onClick: () => onConnect(s, true) },
+      { label: tr("sidebar.openRight"), icon: <ISplitRight size={13} />, disabled: !onSplitOpen, onClick: () => onSplitOpen?.(s, "row") },
+      { label: tr("sidebar.openBelow"), icon: <ISplitDown size={13} />, disabled: !onSplitOpen, onClick: () => onSplitOpen?.(s, "column") },
       "-",
-      { label: "Изменить…", icon: <IEdit size={13} />, onClick: () => onEdit(s) },
-      { label: "Копировать адрес", icon: <ICopy size={13} />, onClick: () => writeText(`${s.username}@${s.host}${s.port !== 22 ? `:${s.port}` : ""}`) },
+      { label: tr("sidebar.editMenu"), icon: <IEdit size={13} />, onClick: () => onEdit(s) },
+      { label: tr("sidebar.copyAddress"), icon: <ICopy size={13} />, onClick: () => writeText(`${s.username}@${s.host}${s.port !== 22 ? `:${s.port}` : ""}`) },
       {
-        label: "Переместить в папку",
+        label: tr("sidebar.moveToFolder"),
         icon: <IFolder size={13} />,
         submenu: [
           ...targets,
-          ...(current ? [{ label: "Без папки", icon: <IFolderOut size={13} />, onClick: () => onMove([s.id], "") }] : []),
+          ...(current ? [{ label: tr("sidebar.noFolder"), icon: <IFolderOut size={13} />, onClick: () => onMove([s.id], "") }] : []),
           ...(targets.length || current ? ["-" as const] : []),
-          { label: "Новая папка…", icon: <IFolderPlus size={13} />, onClick: () => moveToNewFolder(s) },
+          { label: tr("sidebar.newFolderMenu"), icon: <IFolderPlus size={13} />, onClick: () => moveToNewFolder(s) },
         ],
       },
       "-",
-      { label: "Удалить", icon: <ITrash size={13} />, danger: true, onClick: () => onDelete(s) },
+      { label: tr("common.delete"), icon: <ITrash size={13} />, danger: true, onClick: () => onDelete(s) },
     ]);
   };
 
@@ -163,21 +165,21 @@ export function Sidebar(props: Props) {
     e.preventDefault();
     e.stopPropagation();
     ui.menu(e, [
-      { label: "Добавить сервер в папку…", icon: <IPlus size={13} />, onClick: () => onAdd(name) },
-      { label: isCollapsed(name) ? "Развернуть" : "Свернуть", onClick: () => toggle(name) },
+      { label: tr("sidebar.addToFolder"), icon: <IPlus size={13} />, onClick: () => onAdd(name) },
+      { label: isCollapsed(name) ? tr("sidebar.expand") : tr("sidebar.collapse"), onClick: () => toggle(name) },
       "-",
-      { label: "Переименовать…", icon: <IEdit size={13} />, onClick: () => onRenameFolder(name) },
-      { label: "Новая папка…", icon: <IFolderPlus size={13} />, onClick: onAddFolder },
+      { label: tr("sidebar.renameMenu"), icon: <IEdit size={13} />, onClick: () => onRenameFolder(name) },
+      { label: tr("sidebar.newFolderMenu"), icon: <IFolderPlus size={13} />, onClick: onAddFolder },
       "-",
-      { label: "Удалить папку", icon: <ITrash size={13} />, danger: true, onClick: () => onDeleteFolder(name) },
+      { label: tr("sidebar.deleteFolder"), icon: <ITrash size={13} />, danger: true, onClick: () => onDeleteFolder(name) },
     ]);
   };
 
   const listMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     ui.menu(e, [
-      { label: "Добавить сервер…", icon: <IPlus size={13} />, hint: "Ctrl+Shift+N", onClick: () => onAdd() },
-      { label: "Новая папка…", icon: <IFolderPlus size={13} />, onClick: onAddFolder },
+      { label: tr("app.addServerMenu"), icon: <IPlus size={13} />, hint: "Ctrl+Shift+N", onClick: () => onAdd() },
+      { label: tr("sidebar.newFolderMenu"), icon: <IFolderPlus size={13} />, onClick: onAddFolder },
     ]);
   };
 
@@ -191,7 +193,7 @@ export function Sidebar(props: Props) {
         onClick={(e) => onConnect(s, e.ctrlKey || e.shiftKey)}
         onContextMenu={(e) => menu(e, s)}
         onPointerDown={(e) => beginDrag(e, () => ({ kind: "server", ids: [s.id] }), s.name)}
-        title={`${s.username}@${s.host}:${s.port} · ${AUTH_TEXT[s.auth] ?? s.auth}${via ? `\nЧерез: ${via}` : ""}\nКлик — открыть, Ctrl+клик — ещё одна вкладка, ПКМ — действия.\nПеретащите на папку, чтобы переместить.`}
+        title={`${s.username}@${s.host}:${s.port} · ${AUTH_TEXT[s.auth] ? tr(AUTH_TEXT[s.auth]) : s.auth}${via ? `\n${tr("sidebar.via", { via })}` : ""}\n${tr("sidebar.itemHint")}`}
       >
         <span className="server-color" style={{ background: s.color || "#58a6ff" }} />
         <div className="server-text">
@@ -202,21 +204,21 @@ export function Sidebar(props: Props) {
             {via && <span className="server-via"> ↪ {via}</span>}
           </div>
         </div>
-        <span className={`server-status ${st.status}`} title={st.open ? `Открыто панелей: ${st.open}, подключено: ${st.connected}` : undefined}>
+        <span className={`server-status ${st.status}`} title={st.open ? tr("sidebar.openCount", { open: st.open, connected: st.connected }) : undefined}>
           <span className={`status-dot ${st.status}`} />
           <span className="server-status-text">
-            {STATUS_TEXT[st.status]}
+            {tr(STATUS_TEXT[st.status])}
             {st.connected > 1 ? ` ×${st.connected}` : ""}
           </span>
         </span>
         <div className="server-actions" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
-          <button className="icon-btn" title="Новая вкладка" onClick={() => onConnect(s, true)}>
+          <button className="icon-btn" title={tr("sidebar.newTab")} onClick={() => onConnect(s, true)}>
             <ICopy size={14} />
           </button>
-          <button className="icon-btn" title="Изменить" onClick={() => onEdit(s)}>
+          <button className="icon-btn" title={tr("common.edit")} onClick={() => onEdit(s)}>
             <IEdit size={14} />
           </button>
-          <button className="icon-btn danger" title="Удалить" onClick={() => onDelete(s)}>
+          <button className="icon-btn danger" title={tr("common.delete")} onClick={() => onDelete(s)}>
             <ITrash size={14} />
           </button>
         </div>
@@ -227,24 +229,24 @@ export function Sidebar(props: Props) {
   return (
     <aside className="sidebar" style={{ width }}>
       <div className="sidebar-head">
-        <span className="toolwin-title">Серверы</span>
+        <span className="toolwin-title">{tr("home.title")}</span>
         {servers.length > 0 && (
-          <span className="muted small" title="Серверов с активным подключением">
-            {online} / {servers.length} онлайн
+          <span className="muted small" title={tr("sidebar.onlineHint")}>
+            {tr("sidebar.online", { online, total: servers.length })}
           </span>
         )}
         <div className="spacer" />
-        <button className="icon-btn" onClick={onAddFolder} title="Новая папка">
+        <button className="icon-btn" onClick={onAddFolder} title={tr("app.newFolder")}>
           <IFolderPlus size={15} />
         </button>
-        <button className="icon-btn" onClick={() => onAdd()} title="Добавить сервер (Ctrl+Shift+N)">
+        <button className="icon-btn" onClick={() => onAdd()} title={tr("sidebar.addServerHint")}>
           <IPlus size={15} />
         </button>
       </div>
       <div className="sidebar-search">
         <input
           id="server-search"
-          placeholder="Поиск  Ctrl+Shift+K"
+          placeholder={tr("sidebar.search")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
@@ -256,18 +258,18 @@ export function Sidebar(props: Props) {
       <div className="server-list" ref={listRef} data-dropzone="servers" data-accept="server" onContextMenu={listMenu}>
         {servers.length === 0 && folders.length === 0 && (
           <div className="empty-small">
-            Серверов пока нет.
+            {tr("sidebar.empty1")}
             <br />
-            Нажмите +, чтобы добавить.
+            {tr("sidebar.empty2")}
           </div>
         )}
-        {q && flat.length === 0 && servers.length > 0 && <div className="empty-small">Ничего не найдено</div>}
+        {q && flat.length === 0 && servers.length > 0 && <div className="empty-small">{tr("sidebar.notFound")}</div>}
         {tree.map(({ name, list }) => {
           const closed = isCollapsed(name);
           const total = servers.filter((s) => folderOf(s) === name).length;
           return (
             <div key={name} className="group folder" data-dropdir={name}>
-              <div className="group-title" onClick={() => toggle(name)} onContextMenu={(e) => folderMenu(e, name)} title="Клик — свернуть/развернуть, ПКМ — действия">
+              <div className="group-title" onClick={() => toggle(name)} onContextMenu={(e) => folderMenu(e, name)} title={tr("sidebar.folderHint")}>
                 <span className={`chev ${closed ? "closed" : ""}`}>▾</span>
                 <IFolder size={14} />
                 <span className="group-name">{name}</span>
@@ -277,7 +279,7 @@ export function Sidebar(props: Props) {
                 </span>
               </div>
               {!closed && list.map((s) => item(s, true))}
-              {!closed && total === 0 && <div className="folder-empty">Пусто — перетащите сюда сервер</div>}
+              {!closed && total === 0 && <div className="folder-empty">{tr("sidebar.folderEmpty")}</div>}
             </div>
           );
         })}
@@ -287,7 +289,7 @@ export function Sidebar(props: Props) {
           </div>
         )}
       </div>
-      <div className="sidebar-resizer" onPointerDown={startResize} onDoubleClick={() => onResize(260)} title="Потяните, чтобы изменить ширину (двойной клик — сбросить)" />
+      <div className="sidebar-resizer" onPointerDown={startResize} onDoubleClick={() => onResize(260)} title={tr("sidebar.resizeHint")} />
     </aside>
   );
 }

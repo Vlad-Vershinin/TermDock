@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ICapClose, ICapMax, ICapMin, ICapRestore, IClose, IPlus } from "./Icons";
 import { SessionStatus } from "./SessionView";
+import { useT } from "../lib/i18n";
 
 export interface TitleTab {
   id: string;
@@ -30,6 +31,7 @@ const win = () => getCurrentWindow();
  * Empty areas carry `data-tauri-drag-region`, so the window can be dragged / double-click maximized.
  */
 export function TitleBar({ tabs, active, left, right, onSelect, onClose, onTabMenu, onNewTab }: Props) {
+  const tr = useT();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -66,7 +68,7 @@ export function TitleBar({ tabs, active, left, right, onSelect, onClose, onTabMe
               e.preventDefault();
               onTabMenu(e, t.id);
             }}
-            title={`${t.title}${t.panes > 1 ? ` — панелей: ${t.panes}` : ""}\nСредний клик — закрыть, ПКМ — дублировать / разделить`}
+            title={`${t.title}${t.panes > 1 ? tr("titlebar.panes", { n: t.panes }) : ""}\n${tr("titlebar.tabHint")}`}
           >
             <span className="tab-accent" style={{ background: t.color || "transparent" }} />
             <span className={`status-dot ${t.status}`} />
@@ -78,26 +80,26 @@ export function TitleBar({ tabs, active, left, right, onSelect, onClose, onTabMe
                 e.stopPropagation();
                 onClose(t.id);
               }}
-              title="Закрыть вкладку"
+              title={tr("titlebar.closeTab")}
             >
               <IClose size={11} />
             </button>
           </div>
         ))}
-        <button className="icon-btn tb-new" onClick={onNewTab} title="Открыть сервер в новой вкладке">
+        <button className="icon-btn tb-new" onClick={onNewTab} title={tr("titlebar.newTab")}>
           <IPlus size={14} />
         </button>
         <div className="tb-drag" data-tauri-drag-region />
       </div>
       <div className="tb-right">{right}</div>
       <div className="win-controls">
-        <button className="win-btn" onClick={() => win().minimize()} title="Свернуть">
+        <button className="win-btn" onClick={() => win().minimize()} title={tr("titlebar.minimize")}>
           <ICapMin />
         </button>
-        <button className="win-btn" onClick={() => win().toggleMaximize()} title={maximized ? "Восстановить" : "Развернуть"}>
+        <button className="win-btn" onClick={() => win().toggleMaximize()} title={maximized ? tr("titlebar.restore") : tr("titlebar.maximize")}>
           {maximized ? <ICapRestore /> : <ICapMax />}
         </button>
-        <button className="win-btn close" onClick={() => win().close()} title="Закрыть">
+        <button className="win-btn close" onClick={() => win().close()} title={tr("common.close")}>
           <ICapClose />
         </button>
       </div>

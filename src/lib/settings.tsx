@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errorText, Settings } from "./api";
 import { useUi } from "./ui";
+import { setLang } from "./i18n";
 
 /** Same defaults as `settings::Settings::default()` on the Rust side. */
 export const DEFAULT_SETTINGS: Settings = {
@@ -74,11 +75,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    api
-      .getSettings()
-      .catch(() => DEFAULT_SETTINGS)
-      .then((s) => {
+    Promise.all([api.getSettings().catch(() => DEFAULT_SETTINGS), api.settingsFirstRun().catch(() => false)])
+      .then(([s, firstRun]) => {
         const patch: Partial<Settings> = {};
+        // Fresh install on a non-Russian system: start in English.
+        if (firstRun && !/^ru\b/i.test(navigator.language)) patch.language = "en";
         const fs = Number(localStorage.getItem("td.fontSize"));
         if (fs > 0) patch.termFontSize = clampFontSize(fs);
         if (LEGACY_KEYS.slice(1).some((k) => localStorage.getItem(k) === "1")) patch.showHidden = true;
@@ -93,6 +94,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (scale) getCurrentWebview().setZoom(scale / 100).catch(() => {});
   }, [scale]);
+
+  // Set synchronously, before the children render, so non-hook `t()` calls already see the new language.
+  if (settings) setLang(settings.language);
 
   // Render nothing until loaded: terminals and file panes read their initial options from here.
   if (!settings) return null;

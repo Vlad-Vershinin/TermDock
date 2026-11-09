@@ -10,6 +10,7 @@ import { baseName, formatDate, formatMode, formatSize, joinPath, parentPath } fr
 import { useTransfers } from "../lib/transfers";
 import { MenuItem, useUi } from "../lib/ui";
 import { Editor } from "./Editor";
+import { t as trNow, useT } from "../lib/i18n";
 import { IArchive, ICopy, ICopyServer, IDownload, IEdit, IEye, IFile, IFileCode, IFilePlus, IFolder, IFolderDown, IFolderPlus, IImage, IMonitor, IRefresh, IServer, ITerminal, ITrash, IUp, IUpload } from "./Icons";
 
 type Side = "local" | "remote";
@@ -94,6 +95,7 @@ interface PanelProps {
 
 export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: PanelProps) {
   const ui = useUi();
+  const tr = useT();
   const transfers = useTransfers();
   const { settings } = useSettings();
 
@@ -188,7 +190,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
   const download = async (paths: string[], dir?: string) => {
     const dest = dir ?? local.dir;
     if (!sessionId || dest === null || paths.length === 0) return;
-    if (dest === "") return ui.toast("Выберите папку на диске", "error");
+    if (dest === "") return ui.toast(tr("files.chooseLocalDir"), "error");
     await transfers.start({ direction: "down", sessionId, server: server.name, sources: paths, dest });
     local.refresh();
   };
@@ -197,7 +199,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
   const downloadToDownloads = async (paths: string[]) => {
     if (!sessionId || paths.length === 0) return;
     let dest = downloadsDir ?? (await api.downloadDir(server.downloadDir, settings.downloadDir).catch(() => null));
-    if (settings.askDownloadDir || !dest) dest = await pickFolder("Куда сохранить", dest ?? undefined);
+    if (settings.askDownloadDir || !dest) dest = await pickFolder(tr("files.saveTo"), dest ?? undefined);
     if (!dest) return;
     await transfers.start({ direction: "down", sessionId, server: server.name, sources: paths, dest });
     if (local.dir === dest) local.refresh();
@@ -207,7 +209,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
   const copyBetween = async (fromPane: string, toPane: string, paths: string[], dir?: string) => {
     const src = remotePaneRegistry.get(fromPane);
     const dst = remotePaneRegistry.get(toPane);
-    if (!src || !dst) return ui.toast("Сервер отключён или его панель файлов закрыта", "error");
+    if (!src || !dst) return ui.toast(tr("files.peerGone"), "error");
     const dest = dir ?? dst.dir();
     if (!dest || paths.length === 0) return;
     // Two sessions to one server share a filesystem: never overwrite the source with itself.
@@ -222,9 +224,9 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
   const copyMenu = (paths: string[]): MenuItem[] => {
     const others = remotePaneRegistry.others(tabId);
     return [
-      { header: "Копировать на другой сервер" },
+      { header: tr("files.copyToServer") },
       ...(others.length === 0
-        ? [{ label: "Нет других подключённых серверов", hint: "откройте его в соседней панели или вкладке", disabled: true, onClick: () => {} }]
+        ? [{ label: tr("files.noOtherServers"), hint: tr("files.noOtherServersHint"), disabled: true, onClick: () => {} }]
         : others.map((o) => {
             const dir = o.dir();
             return { label: `${o.serverName}: ${dir ?? "…"}`, icon: <ICopyServer size={13} />, disabled: !dir, onClick: () => copyBetween(tabId, o.paneId, paths) };
@@ -254,7 +256,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
         await pane.adapter!.rename(p, joinPath(dir, baseName(p), remoteSide));
       }
     } catch (e) {
-      ui.toast(`Не удалось переместить: ${errorText(e)}`, "error");
+      ui.toast(tr("files.moveFailed", { error: errorText(e) }), "error");
     }
     pane.refresh();
   };
@@ -267,7 +269,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
       else if (source.kind === "remote" && source.tabId !== tabId) copyBetween(source.tabId, tabId, source.paths, d.dir);
     } else {
       if (source.kind === "remote") {
-        if (source.tabId !== tabId) return ui.toast("Перетащите файлы в панель ПК этой же вкладки", "error");
+        if (source.tabId !== tabId) return ui.toast(tr("files.dropToSameTab"), "error");
         download(source.paths, d.dir);
       } else if (source.kind === "local" && d.dir) move(pane, source.paths, d.dir);
     }
@@ -276,7 +278,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
   const selectedPaths = (p: Pane) => p.entries.filter((e) => p.selected.has(e.path)).map((e) => e.path);
 
   const pickAndUpload = async () => {
-    const files = await openDialog({ multiple: true, title: "Выберите файлы для загрузки" });
+    const files = await openDialog({ multiple: true, title: tr("files.pickUpload") });
     if (files) upload(Array.isArray(files) ? files : [files]);
   };
 
@@ -285,15 +287,15 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
       <FilePane
         pane={local}
         tabId={tabId}
-        title="Этот компьютер"
+        title={tr("files.thisComputer")}
         accept="remote,local"
         onDrop={(d) => onDrop(local, d)}
         onOpenFile={(e) => upload([e.path])}
         onDragOut={(paths) => dragOutLocal(paths, ui.toast)}
-        transfer={sessionId ? [{ label: "Загрузить на сервер", icon: <IUpload size={13} />, run: upload }] : undefined}
+        transfer={sessionId ? [{ label: tr("files.uploadToServer"), icon: <IUpload size={13} />, run: upload }] : undefined}
         extra={
-          <button className="btn btn-sm" disabled={!sessionId || local.selected.size === 0} onClick={() => upload(selectedPaths(local))} title="Загрузить выбранное на сервер">
-            <IUpload size={13} /> <span className="btn-label">Загрузить</span>
+          <button className="btn btn-sm" disabled={!sessionId || local.selected.size === 0} onClick={() => upload(selectedPaths(local))} title={tr("files.uploadSelected")}>
+            <IUpload size={13} /> <span className="btn-label">{tr("files.upload")}</span>
           </button>
         }
       />
@@ -302,14 +304,14 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
         tabId={tabId}
         title={`${server.username}@${server.host}`}
         accept="local,os,remote"
-        disabledText={sessionId ? undefined : "Нет подключения"}
+        disabledText={sessionId ? undefined : tr("session.notConnected")}
         onDrop={(d) => onDrop(remote, d)}
         onOpenFile={(e) => download([e.path])}
         onDragOut={dragOutRemoteFiles}
         transfer={[
-          { label: "Скачать на компьютер", hint: local.dir ? baseName(local.dir) : undefined, icon: <IDownload size={13} />, run: download },
+          { label: tr("files.downloadToComputer"), hint: local.dir ? baseName(local.dir) : undefined, icon: <IDownload size={13} />, run: download },
           {
-            label: settings.askDownloadDir ? "Скачать в…" : "Скачать в папку загрузок",
+            label: settings.askDownloadDir ? tr("files.downloadTo") : tr("files.downloadToDownloads"),
             hint: !settings.askDownloadDir && downloadsDir ? baseName(downloadsDir) : undefined,
             icon: <IFolderDown size={13} />,
             run: downloadToDownloads,
@@ -319,11 +321,11 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
         extraMenu={sessionId ? copyMenu : undefined}
         extra={
           <>
-            <button className="btn btn-sm" disabled={remote.selected.size === 0} onClick={() => download(selectedPaths(remote))} title="Скачать выбранное на компьютер">
-              <IDownload size={13} /> <span className="btn-label">Скачать</span>
+            <button className="btn btn-sm" disabled={remote.selected.size === 0} onClick={() => download(selectedPaths(remote))} title={tr("files.downloadSelected")}>
+              <IDownload size={13} /> <span className="btn-label">{tr("files.download")}</span>
             </button>
-            <button className="btn btn-sm" disabled={!sessionId} onClick={pickAndUpload} title="Выбрать файлы на диске и загрузить сюда">
-              <IFilePlus size={13} /> <span className="btn-label">Файлы…</span>
+            <button className="btn btn-sm" disabled={!sessionId} onClick={pickAndUpload} title={tr("files.pickHint")}>
+              <IFilePlus size={13} /> <span className="btn-label">{tr("files.pick")}</span>
             </button>
           </>
         }
@@ -352,6 +354,7 @@ interface PaneProps {
 
 function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onOpenFile, transfer, onCd, extraMenu, onDragOut }: PaneProps) {
   const ui = useUi();
+  const tr = useT();
   const [editing, setEditing] = useState<string | null>(null);
   const zoneRef = useRef<HTMLDivElement>(null);
   const anchor = useRef<string | null>(null);
@@ -393,7 +396,7 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
 
   const mkdir = async () => {
     if (pane.dir === null || pane.dir === "") return;
-    const name = await ui.prompt("Новая папка", "Имя папки");
+    const name = await ui.prompt(tr("app.newFolder"), tr("files.folderName"));
     if (!name) return;
     try {
       await pane.adapter!.mkdir(joinPath(pane.dir, name, remote));
@@ -405,9 +408,9 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
 
   const newFile = async () => {
     if (pane.dir === null || pane.dir === "") return;
-    const name = await ui.prompt("Новый файл", "Имя файла (например, config.yml)");
+    const name = await ui.prompt(tr("files.newFile"), tr("files.fileName"));
     if (!name) return;
-    if (/[\\/]/.test(name)) return ui.toast("Имя не должно содержать / или \\", "error");
+    if (/[\\/]/.test(name)) return ui.toast(tr("files.badName"), "error");
     const path = joinPath(pane.dir, name, remote);
     try {
       await pane.adapter!.createFile(path);
@@ -427,18 +430,18 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
 
   const copyPaths = (paths: string[]) => {
     writeText(paths.join("\n"));
-    ui.toast(paths.length === 1 ? "Путь скопирован" : `Скопировано путей: ${paths.length}`, "success");
+    ui.toast(tr("files.pathsCopied", { n: paths.length }), "success");
   };
 
   const dirMenu = (): MenuItem[] => {
     const ok = pane.dir !== null && pane.dir !== "" && !disabledText;
     return [
-      { label: "Новый файл…", icon: <IFilePlus size={13} />, disabled: !ok, onClick: newFile },
-      { label: "Новая папка…", icon: <IFolderPlus size={13} />, disabled: !ok, onClick: mkdir },
+      { label: tr("files.newFileMenu"), icon: <IFilePlus size={13} />, disabled: !ok, onClick: newFile },
+      { label: tr("sidebar.newFolderMenu"), icon: <IFolderPlus size={13} />, disabled: !ok, onClick: mkdir },
       "-",
-      ...(onCd && pane.dir ? [{ label: "Перейти сюда в терминале", icon: <ITerminal size={13} />, onClick: () => onCd(pane.dir!) }, "-" as const] : []),
-      { label: "Обновить", icon: <IRefresh size={13} />, hint: "F5", disabled: pane.dir === null, onClick: () => pane.refresh() },
-      { label: pane.showHidden ? "Скрыть скрытые файлы" : "Показать скрытые файлы", icon: <IEye size={13} />, onClick: pane.toggleHidden },
+      ...(onCd && pane.dir ? [{ label: tr("files.cdHere"), icon: <ITerminal size={13} />, onClick: () => onCd(pane.dir!) }, "-" as const] : []),
+      { label: tr("files.refresh"), icon: <IRefresh size={13} />, hint: "F5", disabled: pane.dir === null, onClick: () => pane.refresh() },
+      { label: pane.showHidden ? tr("files.hideHidden") : tr("files.showHidden"), icon: <IEye size={13} />, onClick: pane.toggleHidden },
     ];
   };
 
@@ -456,26 +459,26 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
     const single = paths.length === 1;
     ui.menu(ev, [
       single && entry.isDir
-        ? { label: "Открыть", icon: <IFolder size={13} />, hint: "Enter", onClick: () => pane.load(entry.path) }
-        : { label: "Редактировать", icon: <IEdit size={13} />, hint: "F4", disabled: !single, onClick: () => edit(entry) },
-      ...(single && entry.isDir && onCd ? [{ label: "Перейти в терминале", icon: <ITerminal size={13} />, onClick: () => onCd(entry.path) }] : []),
+        ? { label: tr("common.open"), icon: <IFolder size={13} />, hint: "Enter", onClick: () => pane.load(entry.path) }
+        : { label: tr("files.edit"), icon: <IEdit size={13} />, hint: "F4", disabled: !single, onClick: () => edit(entry) },
+      ...(single && entry.isDir && onCd ? [{ label: tr("files.cdInTerminal"), icon: <ITerminal size={13} />, onClick: () => onCd(entry.path) }] : []),
       ...(transfer ?? []).map((t) => ({ label: t.label, hint: t.hint, icon: t.icon, onClick: () => t.run(paths) })),
       ...(extraMenu ? ["-" as const, ...extraMenu(paths)] : []),
       "-",
-      { label: "Переименовать…", icon: <IEdit size={13} />, hint: "F2", disabled: !single, onClick: rename },
-      { label: single ? "Копировать путь" : "Копировать пути", icon: <ICopy size={13} />, onClick: () => copyPaths(paths) },
+      { label: tr("sidebar.renameMenu"), icon: <IEdit size={13} />, hint: "F2", disabled: !single, onClick: rename },
+      { label: single ? tr("files.copyPath") : tr("files.copyPaths"), icon: <ICopy size={13} />, onClick: () => copyPaths(paths) },
       "-",
-      { label: "Новый файл…", icon: <IFilePlus size={13} />, onClick: newFile },
-      { label: "Новая папка…", icon: <IFolderPlus size={13} />, onClick: mkdir },
+      { label: tr("files.newFileMenu"), icon: <IFilePlus size={13} />, onClick: newFile },
+      { label: tr("sidebar.newFolderMenu"), icon: <IFolderPlus size={13} />, onClick: mkdir },
       "-",
-      { label: single ? "Удалить" : `Удалить (${paths.length})`, icon: <ITrash size={13} />, hint: "Del", danger: true, onClick: remove },
+      { label: single ? tr("common.delete") : tr("files.deleteN", { n: paths.length }), icon: <ITrash size={13} />, hint: "Del", danger: true, onClick: remove },
     ]);
   };
 
   const rename = async () => {
     const [path] = [...pane.selected];
     if (!path || pane.dir === null) return;
-    const name = await ui.prompt("Переименовать", "Новое имя", baseName(path));
+    const name = await ui.prompt(tr("common.rename"), tr("files.newName"), baseName(path));
     if (!name || name === baseName(path)) return;
     try {
       await pane.adapter!.rename(path, joinPath(parentPath(path, remote), name, remote));
@@ -488,8 +491,9 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
   const remove = async () => {
     const paths = [...pane.selected];
     if (paths.length === 0) return;
-    const what = paths.length === 1 ? `«${baseName(paths[0])}»` : `${paths.length} объектов`;
-    if (!(await ui.confirm("Удалить?", `${what} будет удалено ${remote ? "на сервере" : "с диска"} без возможности восстановления.`, true))) return;
+    const what = paths.length === 1 ? `«${baseName(paths[0])}»` : tr("transfers.items", { n: paths.length });
+    const text = tr(remote ? "files.deleteRemote" : "files.deleteLocal", { what, n: paths.length });
+    if (!(await ui.confirm(tr("files.deleteTitle"), text, true))) return;
     try {
       for (const p of paths) await pane.adapter!.remove(p);
     } catch (e) {
@@ -530,10 +534,10 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
         {extra}
       </div>
       <div className="pane-toolbar">
-        <button className="icon-btn" title="Вверх (Backspace)" onClick={goUp} disabled={pane.dir === null}>
+        <button className="icon-btn" title={tr("files.up")} onClick={goUp} disabled={pane.dir === null}>
           <IUp />
         </button>
-        <button className="icon-btn" title="Обновить (F5)" onClick={() => pane.refresh()} disabled={pane.dir === null}>
+        <button className="icon-btn" title={tr("files.refreshHint")} onClick={() => pane.refresh()} disabled={pane.dir === null}>
           <IRefresh />
         </button>
         <form
@@ -543,21 +547,21 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
             pane.load(pathInput.trim());
           }}
         >
-          <input className="path-input" value={pathInput} onChange={(e) => setPathInput(e.target.value)} spellCheck={false} placeholder={remote ? "/" : "Диски"} />
+          <input className="path-input" value={pathInput} onChange={(e) => setPathInput(e.target.value)} spellCheck={false} placeholder={remote ? "/" : tr("files.drives")} />
         </form>
-        <button className="icon-btn" title="Новый файл" onClick={newFile} disabled={!pane.dir}>
+        <button className="icon-btn" title={tr("files.newFile")} onClick={newFile} disabled={!pane.dir}>
           <IFilePlus />
         </button>
-        <button className="icon-btn" title="Новая папка" onClick={mkdir} disabled={!pane.dir}>
+        <button className="icon-btn" title={tr("app.newFolder")} onClick={mkdir} disabled={!pane.dir}>
           <IFolderPlus />
         </button>
-        <button className="icon-btn" title="Переименовать (F2)" onClick={rename} disabled={pane.selected.size !== 1}>
+        <button className="icon-btn" title={tr("files.renameHint")} onClick={rename} disabled={pane.selected.size !== 1}>
           <IEdit />
         </button>
-        <button className="icon-btn danger" title="Удалить (Delete)" onClick={remove} disabled={pane.selected.size === 0}>
+        <button className="icon-btn danger" title={tr("files.deleteHint")} onClick={remove} disabled={pane.selected.size === 0}>
           <ITrash />
         </button>
-        <button className={`icon-btn ${pane.showHidden ? "on" : ""}`} title="Показывать скрытые файлы" onClick={pane.toggleHidden}>
+        <button className={`icon-btn ${pane.showHidden ? "on" : ""}`} title={tr("settings.showHidden")} onClick={pane.toggleHidden}>
           <IEye />
         </button>
       </div>
@@ -579,10 +583,10 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
           <table className="files">
             <thead>
               <tr>
-                <th>Имя</th>
-                <th className="num">Размер</th>
-                <th className="col-date">Изменён</th>
-                {remote && <th className="col-mode">Права</th>}
+                <th>{tr("files.colName")}</th>
+                <th className="num">{tr("files.colSize")}</th>
+                <th className="col-date">{tr("files.colModified")}</th>
+                {remote && <th className="col-mode">{tr("files.colMode")}</th>}
               </tr>
             </thead>
             <tbody>
@@ -602,7 +606,7 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
                   onContextMenu={(ev) => rowMenu(ev, e)}
                   onPointerDown={(ev) => {
                     const paths = pane.selected.has(e.path) ? [...pane.selected] : [e.path];
-                    beginDrag(ev, () => ({ kind: pane.side, tabId, paths }), paths.length > 1 ? `${paths.length} объектов` : e.name, onDragOut && (() => onDragOut(paths)));
+                    beginDrag(ev, () => ({ kind: pane.side, tabId, paths }), paths.length > 1 ? tr("transfers.items", { n: paths.length }) : e.name, onDragOut && (() => onDragOut(paths)));
                   }}
                 >
                   <td className="name">
@@ -617,10 +621,10 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
             </tbody>
           </table>
         )}
-        {!disabledText && !pane.error && pane.entries.length === 0 && !pane.loading && <div className="pane-empty">Папка пуста</div>}
+        {!disabledText && !pane.error && pane.entries.length === 0 && !pane.loading && <div className="pane-empty">{tr("files.emptyDir")}</div>}
         {pane.loading && <div className="pane-loading" />}
       </div>
-      <div className="drop-overlay">{remote ? "Отпустите, чтобы загрузить на сервер" : "Отпустите, чтобы скачать сюда"}</div>
+      <div className="drop-overlay">{remote ? tr("files.dropUpload") : tr("files.dropDownload")}</div>
       {editing && pane.adapter && (
         <Editor
           key={editing}
@@ -643,8 +647,8 @@ function selfCopyClash(paths: string[], dest: string): string | null {
   const d = dest.replace(/\/+$/, "");
   for (const p of paths) {
     const src = p.replace(/\/+$/, "");
-    if (parentPath(src, true).replace(/\/+$/, "") === d) return `${baseName(src)}: уже находится в этой папке`;
-    if (d === src || d.startsWith(`${src}/`)) return `${baseName(src)}: нельзя скопировать папку внутрь самой себя`;
+    if (parentPath(src, true).replace(/\/+$/, "") === d) return trNow("files.alreadyHere", { name: baseName(src) });
+    if (d === src || d.startsWith(`${src}/`)) return trNow("files.intoItself", { name: baseName(src) });
   }
   return null;
 }

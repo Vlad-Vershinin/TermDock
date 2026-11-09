@@ -11,6 +11,7 @@ import { paneRegistry } from "../lib/sessions";
 import { clampFontSize, DEFAULT_SETTINGS, terminalFont, useSettings } from "../lib/settings";
 import { useTransfers } from "../lib/transfers";
 import { useUi } from "../lib/ui";
+import { t as trNow, useT } from "../lib/i18n";
 import { FilePanel } from "./FilePanel";
 import { IClose, IFolder, IPlay, IRefresh, IScript, ISplitDown, ISplitRight, IStep } from "./Icons";
 import { useScriptMenu, useScripts } from "./Scripts";
@@ -39,6 +40,7 @@ interface Props {
 
 export function SessionView({ paneId, server, visible, focused, split: inSplit, onFocus, onStatus, onSplit, onClose }: Props) {
   const ui = useUi();
+  const tr = useT();
   const { settings, update: updateSettings } = useSettings();
   // The terminal's handlers are bound once; they read the latest settings through refs.
   const settingsRef = useRef(settings);
@@ -87,14 +89,18 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       const t = term.current!;
       updateStatus("connecting");
       const j = server.jump;
-      let via = j?.serverId ? " через сервер-посредник" : j?.host ? ` через ${j.username}@${j.host}${j.port && j.port !== 22 ? `:${j.port}` : ""}` : "";
+      let via = j?.serverId
+        ? trNow("session.viaJumpServer")
+        : j?.host
+          ? trNow("session.via", { via: `${j.username}@${j.host}${j.port && j.port !== 22 ? `:${j.port}` : ""}` })
+          : "";
       if (!via) {
         // No jump host in the app: ProxyJump from ~/.ssh/config may apply.
         const cfg = await api.sshConfigLookup(server.host, server.port).catch(() => null);
         if (disposed.current) return;
-        if (cfg?.jumps.length) via = ` через ${configJumpText(cfg)} (из ~/.ssh/config)`;
+        if (cfg?.jumps.length) via = trNow("session.viaConfig", { via: configJumpText(cfg) });
       }
-      t.write(`\r\n\x1b[90mПодключение к ${server.username}@${server.host}:${server.port}${via}…\x1b[0m\r\n`);
+      t.write(`\r\n\x1b[90m${trNow("session.connecting", { target: `${server.username}@${server.host}:${server.port}`, via })}\x1b[0m\r\n`);
       try {
         fit.current?.fit();
         let id: string | null = null;
@@ -115,7 +121,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
             else {
               if (id) api.disconnect(id).catch(() => {});
               else closedEarly = true;
-              t.write(`${MOUSE_OFF}\r\n\x1b[33m${e.reason}. Нажмите Enter, чтобы переподключиться.\x1b[0m\r\n`);
+              t.write(`${MOUSE_OFF}\r\n\x1b[33m${e.reason}. ${trNow("session.enterToReconnect")}\x1b[0m\r\n`);
               if (id && sessionRef.current === id) {
                 sessionRef.current = null;
                 setSessionId(null);
@@ -144,43 +150,37 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
           ? { id: jm[1], label: jm[2], isKey: jm[3] === "key", isAgent: jm[3] === "agent", jump: true, msg: jm[4] }
           : { id: server.id, label: `${server.username}@${server.host}`, isKey: server.auth === "key", isAgent: server.auth === "agent", jump: false, msg: raw };
         const host = hop.label.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
-        const what = hop.jump ? "сервера-посредника " : "";
         const msg = hop.msg;
         if (msg === "NEED_SECRET" || (msg === "AUTH_FAILED" && !hop.isKey && !hop.isAgent)) {
           const r = await ui.dialog({
-            title: hop.isKey ? `Пароль от ключа ${what}${hop.label}` : `Пароль ${what}${hop.label}`,
-            message: msg === "AUTH_FAILED" ? <span className="err">Неверный пароль, попробуйте ещё раз.</span> : undefined,
+            title: trNow(hop.isKey ? (hop.jump ? "session.keyPassJump" : "session.keyPass") : hop.jump ? "session.passJump" : "session.pass", { label: hop.label }),
+            message: msg === "AUTH_FAILED" ? <span className="err">{trNow("session.wrongPassword")}</span> : undefined,
             fields: [
-              { name: "secret", label: hop.isKey ? "Passphrase" : "Пароль", type: "password" },
-              { name: "remember", label: "Сохранить в системном хранилище паролей", type: "checkbox", value: true },
+              { name: "secret", label: hop.isKey ? trNow("session.passphrase") : trNow("session.password"), type: "password" },
+              { name: "remember", label: trNow("session.remember"), type: "checkbox", value: true },
             ],
-            okText: "Подключиться",
+            okText: trNow("sidebar.connect"),
           });
           if (r) {
             const remember = (opts.remember ?? []).filter((x) => x !== hop.id);
             if (r.remember) remember.push(hop.id);
             return connect({ ...opts, secrets: { ...opts.secrets, [hop.id]: String(r.secret) }, remember });
           }
-          t.write("\x1b[90mОтменено.\x1b[0m\r\n");
+          t.write(`\x1b[90m${trNow("session.cancelled")}\x1b[0m\r\n`);
           return updateStatus("closed");
         }
         if (msg.startsWith("HOSTKEY_UNKNOWN|") || msg.startsWith("HOSTKEY_CHANGED|")) {
           const [kind, fp, alg] = msg.split("|");
           const changed = kind === "HOSTKEY_CHANGED";
           const ok = await ui.dialog({
-            title: changed ? "⚠ Ключ сервера изменился!" : hop.jump ? "Новый сервер-посредник" : "Новый сервер",
+            title: changed ? trNow("session.keyChangedTitle") : hop.jump ? trNow("session.newJumpServer") : trNow("session.newServer"),
             danger: changed,
             message: (
               <>
                 {changed ? (
-                  <p className="err">
-                    Ключ {hop.jump ? "сервера-посредника" : "сервера"} {host} не совпадает с сохранённым. Это может означать переустановку
-                    сервера — или атаку «человек посередине». Продолжайте, только если уверены.
-                  </p>
+                  <p className="err">{trNow(hop.jump ? "session.keyChangedJump" : "session.keyChanged", { host })}</p>
                 ) : (
-                  <p>
-                    Подлинность {hop.jump ? "сервера-посредника" : "сервера"} {host} ещё не подтверждена. Сверьте отпечаток ключа:
-                  </p>
+                  <p>{trNow(hop.jump ? "session.unknownKeyJump" : "session.unknownKey", { host })}</p>
                 )}
                 <code className="fingerprint">
                   {alg ? `${alg} ` : ""}
@@ -188,14 +188,14 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
                 </code>
               </>
             ),
-            okText: changed ? "Доверять новому ключу" : "Доверять и подключиться",
+            okText: changed ? trNow("session.trustNewKey") : trNow("session.trustAndConnect"),
           });
           if (ok) return connect({ ...opts, accept: { ...opts.accept, [hop.id]: fp } });
-          t.write("\x1b[90mОтменено.\x1b[0m\r\n");
+          t.write(`\x1b[90m${trNow("session.cancelled")}\x1b[0m\r\n`);
           return updateStatus("closed");
         }
-        const text = msg === "AUTH_FAILED" ? (hop.jump ? `Сервер-посредник ${hop.label} отклонил ключ` : "Сервер отклонил ключ") : msg;
-        t.write(`\x1b[31m${text}\x1b[0m\r\n\x1b[90mНажмите Enter, чтобы попробовать снова.\x1b[0m\r\n`);
+        const text = msg === "AUTH_FAILED" ? (hop.jump ? trNow("session.jumpKeyRejected", { label: hop.label }) : trNow("session.keyRejected")) : msg;
+        t.write(`\x1b[31m${text}\x1b[0m\r\n\x1b[90m${trNow("session.enterToRetry")}\x1b[0m\r\n`);
         updateStatus("error");
       }
     },
@@ -441,7 +441,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     const id = server.connectScript;
     if (!id) return;
     const script = scripts.find((x) => x.id === id);
-    if (!script) return ui.toast(`Скрипт при подключении к «${server.name}» не найден — выберите другой в настройках сервера`, "error");
+    if (!script) return ui.toast(trNow("session.connectScriptMissing", { name: server.name }), "error");
     const session = sessionRef.current;
     const started = Date.now();
     const timer = setInterval(() => {
@@ -458,8 +458,8 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
   const dropRef = useRef<(d: DropDetail) => void>(() => {});
   dropRef.current = (d) => {
     const sid = sessionRef.current;
-    if (!sid) return ui.toast("Нет подключения", "error");
-    if (!remoteDir.current) return ui.toast("Откройте панель файлов, чтобы выбрать папку на сервере", "error");
+    if (!sid) return ui.toast(trNow("session.notConnected"), "error");
+    if (!remoteDir.current) return ui.toast(trNow("session.openFilesFirst"), "error");
     if (d.source.kind === "os" || d.source.kind === "local")
       transfers.start({ direction: "up", sessionId: sid, server: server.name, sources: d.source.paths, dest: remoteDir.current });
   };
@@ -514,36 +514,36 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
           {server.port !== 22 ? `:${server.port}` : ""}
         </span>
         <span className="session-status">
-          {{ connecting: "подключение…", connected: "подключено", closed: "отключено", error: "ошибка" }[status]}
+          {tr(`session.status.${status}`)}
         </span>
         <div className="spacer" />
         {status === "connected" && <Telemetry sessionId={sessionId} visible={visible} />}
         {status === "connected" && <Ports sessionId={sessionId} visible={visible} />}
         {status === "connected" && showFiles && remoteDirState && (
-          <button className="btn btn-sm" title="Перейти в терминале в папку, открытую в файловой панели" onClick={() => cdTo(remoteDir.current!)}>
-            cd сюда
+          <button className="btn btn-sm" title={tr("session.cdHint")} onClick={() => cdTo(remoteDir.current!)}>
+            {tr("session.cdHere")}
           </button>
         )}
         {(status === "closed" || status === "error") && (
-          <button className="btn btn-sm btn-primary" onClick={() => connect()} title="Переподключиться">
-            <IRefresh size={13} /> <span className="btn-label">Переподключиться</span>
+          <button className="btn btn-sm btn-primary" onClick={() => connect()} title={tr("session.reconnect")}>
+            <IRefresh size={13} /> <span className="btn-label">{tr("session.reconnect")}</span>
           </button>
         )}
-        <button className="btn btn-sm" disabled={status !== "connected"} onClick={(e) => ui.menu(e.currentTarget, scriptMenu(paneId))} title="Выполнить сохранённый скрипт">
-          <IScript /> <span className="btn-label">Скрипты</span>
+        <button className="btn btn-sm" disabled={status !== "connected"} onClick={(e) => ui.menu(e.currentTarget, scriptMenu(paneId))} title={tr("session.runScript")}>
+          <IScript /> <span className="btn-label">{tr("app.scripts")}</span>
         </button>
-        <button className={`btn btn-sm ${showFiles ? "on" : ""}`} onClick={toggleFiles} title="Показать/скрыть файлы">
-          <IFolder /> <span className="btn-label">Файлы</span>
+        <button className={`btn btn-sm ${showFiles ? "on" : ""}`} onClick={toggleFiles} title={tr("session.toggleFiles")}>
+          <IFolder /> <span className="btn-label">{tr("settings.files")}</span>
         </button>
         <span className="bar-sep" />
-        <button className="icon-btn" onClick={() => onSplit("row")} title="Разделить вправо — ещё одно подключение (Alt+Shift+=)">
+        <button className="icon-btn" onClick={() => onSplit("row")} title={tr("session.splitRight")}>
           <ISplitRight size={14} />
         </button>
-        <button className="icon-btn" onClick={() => onSplit("column")} title="Разделить вниз — ещё одно подключение (Alt+Shift+-)">
+        <button className="icon-btn" onClick={() => onSplit("column")} title={tr("session.splitDown")}>
           <ISplitDown size={14} />
         </button>
         {inSplit && (
-          <button className="icon-btn" onClick={onClose} title="Закрыть панель (Ctrl+Shift+W)">
+          <button className="icon-btn" onClick={onClose} title={tr("session.closePane")}>
             <IClose size={14} />
           </button>
         )}
@@ -552,18 +552,18 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         <div className="step-bar">
           <IStep size={13} />
           <span className="step-name">
-            {steps.name}: шаг {steps.next + 1} из {steps.list.length}
+            {steps.name}: {tr("session.step", { i: steps.next + 1, n: steps.list.length })}
           </span>
           <code className="step-next" title={steps.list[steps.next]}>
             {steps.list[steps.next]}
           </code>
-          <button className="btn btn-sm btn-primary" onClick={() => stepActions.current.next()} title="Отправить эту команду (Ctrl+Shift+Enter)">
-            <IStep size={12} /> Следующая
+          <button className="btn btn-sm btn-primary" onClick={() => stepActions.current.next()} title={tr("session.stepNextHint")}>
+            <IStep size={12} /> {tr("session.stepNext")}
           </button>
-          <button className="btn btn-sm" onClick={() => stepActions.current.rest()} title="Отправить все оставшиеся команды одним блоком">
-            <IPlay size={12} /> Все остальные
+          <button className="btn btn-sm" onClick={() => stepActions.current.rest()} title={tr("session.stepRestHint")}>
+            <IPlay size={12} /> {tr("session.stepRest")}
           </button>
-          <button className="icon-btn" onClick={() => stepActions.current.stop()} title="Прервать пошаговый запуск">
+          <button className="icon-btn" onClick={() => stepActions.current.stop()} title={tr("session.stepStop")}>
             <IClose size={13} />
           </button>
         </div>
@@ -571,7 +571,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       <div className="session-body" ref={body}>
         <div className="term-zone" ref={termZone} data-dropzone={`${paneId}:term`} data-accept="os,local" style={{ flex: showFiles ? `0 0 ${split * 100}%` : "1 1 auto" }}>
           <div className="term" ref={termEl} />
-          <div className="drop-overlay">Отпустите, чтобы загрузить в текущую папку сервера</div>
+          <div className="drop-overlay">{tr("session.dropUpload")}</div>
         </div>
         {showFiles && (
           <>
