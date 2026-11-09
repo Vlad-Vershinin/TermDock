@@ -31,6 +31,35 @@ function uptimeText(sec: number) {
 
 const pct = (used: number, total: number) => (total ? (100 * used) / total : 0);
 
+/** Per-core load: labelled rows for a few cores, a grid of tiny columns for many. */
+function Cores({ cores }: { cores: number[] }) {
+  const dense = cores.length > 16;
+  return (
+    <>
+      <div className="tp-sub">Ядра</div>
+      <div className={`tp-cores ${dense ? "dense" : ""}`}>
+        {cores.map((c, i) => {
+          const p = Math.max(0, Math.min(100, c));
+          const title = `Ядро ${i}: ${Math.round(p)}%`;
+          return dense ? (
+            <span key={i} className={`tp-core-cell ${level(p)}`} title={title}>
+              <span style={{ height: `${p}%` }} />
+            </span>
+          ) : (
+            <span key={i} className="tp-core" title={title}>
+              <span className="tp-core-n">{i}</span>
+              <span className={`meter-bar wide ${level(p)}`}>
+                <span style={{ width: `${p}%` }} />
+              </span>
+              <span className="tp-core-v">{Math.round(p)}%</span>
+            </span>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 /** Compact CPU / RAM / disk meters for a connected session, with a details popover. */
 export function Telemetry({ sessionId, visible }: { sessionId: string | null; visible: boolean }) {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -133,6 +162,7 @@ export function Telemetry({ sessionId, visible }: { sessionId: string | null; vi
               </>
             )}
           </div>
+          {stats.cores && stats.cores.length > 1 && <Cores cores={stats.cores} />}
           {stats.disks.length > 0 && (
             <>
               <div className="tp-sub">Диски</div>
