@@ -8,6 +8,7 @@ import "@xterm/xterm/css/xterm.css";
 import { api, configJumpText, errorText, Server } from "../lib/api";
 import { DropDetail } from "../lib/dnd";
 import { paneRegistry } from "../lib/sessions";
+import { clampFontSize, DEFAULT_SETTINGS, terminalFont, useSettings } from "../lib/settings";
 import { useTransfers } from "../lib/transfers";
 import { useUi } from "../lib/ui";
 import { FilePanel } from "./FilePanel";
@@ -36,10 +37,14 @@ interface Props {
   onClose: () => void;
 }
 
-const FONT = '"JetBrains Mono", "Cascadia Mono", "Fira Code", Consolas, "DejaVu Sans Mono", "Ubuntu Mono", monospace';
-
 export function SessionView({ paneId, server, visible, focused, split: inSplit, onFocus, onStatus, onSplit, onClose }: Props) {
   const ui = useUi();
+  const { settings, update: updateSettings } = useSettings();
+  // The terminal's handlers are bound once; they read the latest settings through refs.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const updateSettingsRef = useRef(updateSettings);
+  updateSettingsRef.current = updateSettings;
   const scriptMenu = useScriptMenu();
   const { scripts, run: runScript } = useScripts();
   /** Step-by-step script run in progress: next = index of the command to send next. */
@@ -199,12 +204,15 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
 
   // ---- terminal setup ----
   useEffect(() => {
+    const st = settingsRef.current;
     const t = new Terminal({
-      fontFamily: FONT,
-      fontSize: Number(localStorage.getItem("td.fontSize")) || 14,
-      cursorBlink: true,
+      fontFamily: terminalFont(st.termFontFamily),
+      fontSize: st.termFontSize,
+      lineHeight: st.termLineHeight,
+      cursorStyle: st.termCursorStyle,
+      cursorBlink: st.termCursorBlink,
       allowProposedApi: true,
-      scrollback: 10000,
+      scrollback: st.termScrollback,
       theme: {
         background: "#1e1f22",
         foreground: "#d6deeb",
@@ -279,11 +287,26 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     t.onBinary((d) => sessionRef.current && api.write(sessionRef.current, Uint8Array.from(d, (c) => c.charCodeAt(0) & 255)));
     t.onResize(({ cols, rows }) => sessionRef.current && api.resize(sessionRef.current, cols, rows).catch(() => {}));
 
-    const setFont = (size: number) => {
-      t.options.fontSize = Math.max(8, Math.min(32, size));
-      localStorage.setItem("td.fontSize", String(t.options.fontSize));
-      refit.current();
-    };
+    // Zoom changes the global setting, so every open terminal follows (applied by the effect below).
+    const setFont = (size: number) => updateSettingsRef.current({ termFontSize: clampFontSize(size) });
+
+    t.attachCustomWheelEventHandler((e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.deltaY === 0) return true;
+      e.preventDefault();
+      setFont(settingsRef.current.termFontSize + (e.deltaY < 0 ? 1 : -1));
+      return false;
+    });
+
+    // Copy on select: once the selection has settled (it changes on every mouse move while dragging).
+    let copyTimer: number | undefined;
+    t.onSelectionChange(() => {
+      if (!settingsRef.current.termCopyOnSelect) return;
+      clearTimeout(copyTimer);
+      copyTimer = window.setTimeout(() => {
+        const sel = t.getSelection();
+        if (sel) writeText(sel);
+      }, 200);
+    });
 
     t.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
@@ -298,16 +321,18 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         readText().then((txt) => txt && t.paste(txt));
         return false;
       }
-      if (mod && !e.shiftKey && (e.key === "=" || e.key === "+")) return setFont(t.options.fontSize! + 1), false;
-      if (mod && !e.shiftKey && e.key === "-") return setFont(t.options.fontSize! - 1), false;
-      if (mod && !e.shiftKey && e.key === "0") return setFont(14), false;
+      if (mod && !e.shiftKey && (e.key === "=" || e.key === "+")) return setFont(settingsRef.current.termFontSize + 1), false;
+      if (mod && !e.shiftKey && e.key === "-") return setFont(settingsRef.current.termFontSize - 1), false;
+      if (mod && !e.shiftKey && e.key === "0") return setFont(DEFAULT_SETTINGS.termFontSize), false;
       return true;
     });
 
-    // Right click: copy selection if any, otherwise paste (like PuTTY / Windows Terminal).
+    // Right click (by default): copy selection if any, otherwise paste (like PuTTY / Windows Terminal).
     const onContext = (e: MouseEvent) => {
       e.preventDefault();
-      const sel = t.getSelection();
+      const mode = settingsRef.current.termRightClick;
+      if (mode === "none") return;
+      const sel = mode === "copyPaste" ? t.getSelection() : "";
       if (sel) {
         writeText(sel);
         t.clearSelection();
@@ -324,6 +349,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
 
     return () => {
       disposed.current = true;
+      clearTimeout(copyTimer);
       ro.disconnect();
       if (sessionRef.current) api.disconnect(sessionRef.current);
       sessionRef.current = null;
@@ -331,6 +357,22 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  // Settings changed (here, in another pane or in the settings dialog): apply to the live terminal.
+  useEffect(() => {
+    const t = term.current;
+    if (!t) return;
+    t.options.fontFamily = terminalFont(settings.termFontFamily);
+    t.options.fontSize = settings.termFontSize;
+    t.options.lineHeight = settings.termLineHeight;
+    t.options.cursorStyle = settings.termCursorStyle;
+    t.options.cursorBlink = settings.termCursorBlink;
+    t.options.scrollback = settings.termScrollback;
+    // Hidden tabs are refitted when shown (see below).
+    if (visibleRef.current) refit.current();
+  }, [settings.termFontFamily, settings.termFontSize, settings.termLineHeight, settings.termCursorStyle, settings.termCursorBlink, settings.termScrollback]);
 
   const connectRef = useRef(() => {});
   connectRef.current = () => connect();

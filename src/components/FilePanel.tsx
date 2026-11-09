@@ -4,6 +4,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api, Entry, errorText, ReadTextOptions, Server, TextEncoding, TextFile } from "../lib/api";
 import { beginDrag, DropDetail } from "../lib/dnd";
 import { remotePaneRegistry } from "../lib/sessions";
+import { useSettings } from "../lib/settings";
 import { dragOutLocal, dragOutRemote } from "../lib/dragout";
 import { baseName, formatDate, formatMode, formatSize, joinPath, parentPath } from "../lib/paths";
 import { useTransfers } from "../lib/transfers";
@@ -23,13 +24,15 @@ interface Adapter {
   writeText: (p: string, text: string, enc: TextEncoding) => Promise<void>;
 }
 
-function usePane(adapter: Adapter | null, side: Side) {
+function usePane(adapter: Adapter | null, side: Side, defaultHidden: boolean) {
   const [dir, setDir] = useState<string | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [showHidden, setShowHidden] = useState(() => localStorage.getItem(`td.hidden.${side}`) === "1");
+  // The pane's eye button toggles just this pane; changing the setting resets every pane to it.
+  const [showHidden, setShowHidden] = useState(defaultHidden);
+  useEffect(() => setShowHidden(defaultHidden), [defaultHidden]);
   const reqId = useRef(0);
 
   const load = useCallback(
@@ -74,10 +77,7 @@ function usePane(adapter: Adapter | null, side: Side) {
     load,
     refresh,
     showHidden,
-    toggleHidden: () => {
-      localStorage.setItem(`td.hidden.${side}`, showHidden ? "0" : "1");
-      setShowHidden(!showHidden);
-    },
+    toggleHidden: () => setShowHidden(!showHidden),
   };
 }
 
@@ -95,6 +95,7 @@ interface PanelProps {
 export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: PanelProps) {
   const ui = useUi();
   const transfers = useTransfers();
+  const { settings } = useSettings();
 
   const localAdapter = useMemo<Adapter>(
     () => ({
@@ -124,8 +125,8 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
     [sessionId],
   );
 
-  const local = usePane(localAdapter, "local");
-  const remote = usePane(remoteAdapter, "remote");
+  const local = usePane(localAdapter, "local", settings.showHidden);
+  const remote = usePane(remoteAdapter, "remote", settings.showHidden);
 
   // Initial directories.
   useEffect(() => {

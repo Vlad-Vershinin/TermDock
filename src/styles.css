@@ -390,6 +390,8 @@ details[open] { display: flex; flex-direction: column; gap: 10px; }
 .segmented { display: inline-flex; padding: 3px; background: var(--bg); border: 1px solid var(--border-2); border-radius: 8px; align-self: flex-start; }
 .segmented button { border: none; background: transparent; padding: 5px 14px; border-radius: 6px; cursor: pointer; color: var(--muted); }
 .segmented button.on { background: var(--bg-3); color: var(--text); }
+.settings-section { margin: 10px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.settings .segmented button { padding: 4px 10px; }
 .colors { display: flex; gap: 8px; }
 .color { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
 .color.on { border-color: #fff; }

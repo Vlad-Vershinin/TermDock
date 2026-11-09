@@ -129,6 +129,28 @@ export interface Stats {
   hostname?: string | null;
 }
 
+/** Global app settings (`settings.json`, mirror of `settings::Settings`). */
+export interface Settings {
+  language: "ru" | "en";
+  /** Webview zoom, percent. */
+  uiScale: number;
+  /** Empty = the built-in monospace font stack. */
+  termFontFamily: string;
+  termFontSize: number;
+  termLineHeight: number;
+  termCursorStyle: "block" | "bar" | "underline";
+  termCursorBlink: boolean;
+  termScrollback: number;
+  termCopyOnSelect: boolean;
+  /** copyPaste: copy the selection, otherwise paste. */
+  termRightClick: "copyPaste" | "paste" | "none";
+  /** Empty = the OS Downloads folder. */
+  downloadDir: string;
+  askDownloadDir: boolean;
+  showHidden: boolean;
+  localStartDir: "last" | "downloads";
+}
+
 export const api = {
   listServers: () => invoke<Server[]>("list_servers"),
   /** secret: undefined = keep, "" = forget, string = save */
@@ -140,6 +162,11 @@ export const api = {
   listScripts: () => invoke<Script[]>("list_scripts"),
   saveScript: (script: Script) => invoke<Script>("save_script", { script }),
   deleteScript: (id: string) => invoke<void>("delete_script", { id }),
+
+  getSettings: () => invoke<Settings>("get_settings"),
+  saveSettings: (value: Settings) => invoke<Settings>("save_settings", { value }),
+  /** Resolved downloads folder: the server's own, else the global one, else the OS Downloads (`~` expanded). */
+  downloadDir: (serverDir?: string | null, global?: string) => invoke<string>("download_dir", { serverDir: serverDir ?? null, global: global ?? null }),
 
   listFolders: () => invoke<string[]>("list_folders"),
   saveFolders: (names: string[]) => invoke<string[]>("save_folders", { names }),
