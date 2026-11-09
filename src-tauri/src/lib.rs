@@ -2,6 +2,7 @@ mod dragout;
 mod files;
 mod forward;
 mod scripts;
+mod settings;
 mod ssh;
 mod sshconfig;
 mod stats;
@@ -14,6 +15,7 @@ use tauri::{AppHandle, Manager, State};
 
 use files::{Entry, Transfers};
 use scripts::{Script, Scripts};
+use settings::{Settings, SettingsStore};
 use std::collections::HashMap;
 
 use ssh::{ConnectParams, Hop, Sessions, TermChannel};
@@ -414,6 +416,38 @@ async fn remote_stats(sessions: State<'_, Sessions>, session_id: String) -> Resu
     sessions.get(&session_id)?.stats().await
 }
 
+// ---------- settings ----------
+
+#[tauri::command]
+fn get_settings(settings: State<SettingsStore>) -> Settings {
+    settings.get()
+}
+
+#[tauri::command]
+fn save_settings(settings: State<SettingsStore>, value: Settings) -> Result<Settings, String> {
+    settings.save(value)
+}
+
+/// The folder for "download to the downloads folder": the server's own (`server_dir`), else the
+/// global one (`global`, the setting as the UI has it right now — saving is debounced), else the
+/// OS Downloads folder. Not created here: the download itself creates it.
+#[tauri::command]
+fn download_dir(settings: State<SettingsStore>, server_dir: Option<String>, global: Option<String>) -> String {
+    let global = global.unwrap_or_else(|| settings.get().download_dir);
+    settings::resolve_download_dir(server_dir.as_deref(), &global).to_string_lossy().into_owned()
+}
+
+/// Opens a local file or folder with its default app. Done here rather than via the opener
+/// plugin's JS API so that no path scope has to be granted to the webview.
+#[tauri::command]
+fn open_local_path(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Файл не найден: {path}"));
+    }
+    app.opener().open_path(&path, None::<&str>).map_err(|e| format!("Не удалось открыть {path}: {e}"))
+}
+
 // ---------- files ----------
 
 #[tauri::command]
@@ -600,6 +634,7 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             app.manage(Store::load(dir.clone()));
             app.manage(Scripts::load(dir.clone()));
+            app.manage(SettingsStore::load(&dir));
             app.manage(Paths { known_hosts: dir.join("known_hosts") });
             app.manage(Sessions::default());
             app.manage(Transfers::default());
@@ -618,6 +653,10 @@ pub fn run() {
             list_scripts,
             save_script,
             delete_script,
+            get_settings,
+            save_settings,
+            download_dir,
+            open_local_path,
             ssh_connect,
             ssh_config_lookup,
             ssh_write,

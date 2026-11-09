@@ -1,7 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from "react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, errorText, Progress } from "./api";
-import { baseName, formatSize } from "./paths";
+import { baseName, formatSize, joinPath } from "./paths";
 import { useUi } from "./ui";
 import { IClose, ICopyServer, IDownload, IUpload } from "../components/Icons";
 
@@ -12,6 +13,8 @@ export interface Transfer {
   /** Server name; "src → dst" for server-to-server copies. */
   server: string;
   dest: string;
+  /** Files / folders on this computer: the saved items of a download, the sources of an upload. */
+  localPaths: string[];
   progress: Progress;
   startedAt: number;
 }
@@ -51,7 +54,9 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
       const id = crypto.randomUUID();
       const label = sources.length === 1 ? baseName(sources[0]) : `${sources.length} объектов`;
       const progress: Progress = { id, transferred: 0, total: 0, filesDone: 0, filesTotal: 0, current: "", status: "running" };
-      setTransfers((l) => [{ id, direction, label, server, dest, progress, startedAt: Date.now() }, ...l]);
+      // Downloads land as <dest>/<source name> (the backend overwrites, never renames).
+      const localPaths = direction === "up" ? sources : direction === "down" ? sources.map((s) => joinPath(dest, baseName(s), false)) : [];
+      setTransfers((l) => [{ id, direction, label, server, dest, localPaths, progress, startedAt: Date.now() }, ...l]);
       try {
         if (args.direction === "copy") await api.copyBetween(sessionId, id, sources, args.dstSessionId, dest);
         else if (direction === "up") await api.upload(sessionId, id, sources, dest);
@@ -87,6 +92,9 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
 
 export function TransfersPanel({ onClose }: { onClose: () => void }) {
   const { transfers, cancel, clearFinished } = useTransfers();
+  const { toast } = useUi();
+  const reveal = (paths: string[]) => revealItemInDir(paths.length === 1 ? paths[0] : paths).catch((e) => toast(`Не удалось открыть папку: ${errorText(e)}`, "error"));
+  const open = (path: string) => api.openLocalPath(path).catch((e) => toast(errorText(e), "error"));
   return (
     <div className="transfers-panel">
       <div className="transfers-head">
@@ -134,6 +142,18 @@ export function TransfersPanel({ onClose }: { onClose: () => void }) {
                 {p.status === "cancelled" && <>Отменено</>}
                 {p.status === "error" && <span className="err">{p.error}</span>}
               </div>
+              {p.status === "done" && t.localPaths.length > 0 && (
+                <div className="transfer-actions">
+                  <button className="link-btn" onClick={() => reveal(t.localPaths)} title={t.localPaths.join("\n")}>
+                    Показать в папке
+                  </button>
+                  {t.localPaths.length === 1 && (
+                    <button className="link-btn" onClick={() => open(t.localPaths[0])} title={t.localPaths[0]}>
+                      Открыть
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

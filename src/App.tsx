@@ -1,28 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, errorText, Server } from "./lib/api";
+import { SettingsProvider } from "./lib/settings";
 import { clearHover, dropAt, hoverAt } from "./lib/dnd";
 import { isDraggingOut, isOwnDragPath } from "./lib/dragout";
 import { TransfersPanel, TransfersProvider, useTransfers } from "./lib/transfers";
 import { MenuItem, UiProvider, useUi } from "./lib/ui";
 import { ServerDialog } from "./components/ServerDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { SessionStatus } from "./components/SessionView";
 import { groupServers, MAX_SIDEBAR, MIN_SIDEBAR, ServerState, Sidebar } from "./components/Sidebar";
 import { ScriptsPanel, ScriptsProvider, useScripts } from "./components/Scripts";
 import { PaneHandlers, PaneState, SplitDir, Tab, TabView } from "./components/TabView";
 import { TitleBar, TitleTab, WindowEdges } from "./components/TitleBar";
-import { IClose, ICopy, IHome, IKey, ILock, IPlay, IPlus, IScript, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
+import { IClose, ICopy, IHome, IKey, ILock, IPlay, IPlus, IScript, ISettings, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
 
 const MAX_PANES = 4;
 
 export default function App() {
   return (
     <UiProvider>
-      <TransfersProvider>
-        <ScriptsProvider>
-          <Main />
-        </ScriptsProvider>
-      </TransfersProvider>
+      <SettingsProvider>
+        <TransfersProvider>
+          <ScriptsProvider>
+            <Main />
+          </ScriptsProvider>
+        </TransfersProvider>
+      </SettingsProvider>
     </UiProvider>
   );
 }
@@ -48,6 +53,7 @@ function Main() {
   const [newInFolder, setNewInFolder] = useState<string | undefined>(undefined);
   const [folders, setFolders] = useState<string[]>([]);
   const [showTransfers, setShowTransfers] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("td.sidebar") !== "0");
   const [sidebarWidth, setSidebarWidth] = useState(() => Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, readNumber("td.sidebarWidth", 270))));
   const [scriptsOpen, setScriptsOpen] = useState(() => localStorage.getItem("td.scriptsPanel") === "1");
@@ -73,13 +79,20 @@ function Main() {
 
   // Files dropped from the OS file manager: route to the drop zone under the cursor.
   useEffect(() => {
+    // Physical pixels per CSS pixel. Not just devicePixelRatio: with the UI scale setting (webview
+    // zoom) some engines fold the zoom into it and some don't, so measure it on each drag.
+    let ratio = window.devicePixelRatio || 1;
     const un = getCurrentWebview().onDragDropEvent((ev) => {
       const p = ev.payload;
       // Our own drag-out passing over / dropped back onto the window: ignore, no re-upload.
       if (p.type === "leave" || isDraggingOut()) return clearHover();
-      const dpr = window.devicePixelRatio || 1;
-      const x = p.position.x / dpr;
-      const y = p.position.y / dpr;
+      if (p.type === "enter")
+        getCurrentWindow()
+          .innerSize()
+          .then((s) => window.innerWidth > 0 && s.width > 0 && (ratio = s.width / window.innerWidth))
+          .catch(() => {});
+      const x = p.position.x / ratio;
+      const y = p.position.y / ratio;
       if (p.type === "over" || p.type === "enter") hoverAt(x, y, { kind: "os", paths: [] });
       else if (p.type === "drop") {
         const paths = p.paths.filter((f) => !isOwnDragPath(f));
@@ -289,6 +302,7 @@ function Main() {
         setNewInFolder(undefined);
         setEditing(null);
       }
+      else if (mod && !e.shiftKey && !e.altKey && e.code === "Comma") setSettingsOpen(true);
       else if (mod && e.shiftKey && e.code === "KeyW" && tab) closePane(tab.id, tab.focus);
       else if (mod && e.shiftKey && e.code === "KeyD" && tab) duplicateTab(tab.id);
       else if (mod && e.key === "Tab" && list.length) {
@@ -462,6 +476,9 @@ function Main() {
             <button className={`tb-btn ${showTransfers ? "on" : ""}`} onClick={() => setShowTransfers(!showTransfers)} title="Передачи файлов">
               <ITransfer size={14} /> Передачи{running ? <span className="badge">{running}</span> : null}
             </button>
+            <button className={`icon-btn tb-tool ${settingsOpen ? "on" : ""}`} onClick={() => setSettingsOpen(true)} title="Настройки (Ctrl+,)">
+              <ISettings size={15} />
+            </button>
           </>
         }
       />
@@ -507,6 +524,7 @@ function Main() {
         )}
       </div>
       {editing !== undefined && <ServerDialog server={editing} servers={servers} folders={folders} folder={editing ? undefined : newInFolder} onClose={() => setEditing(undefined)} onSaved={onSaved} />}
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       <WindowEdges />
     </div>
   );
@@ -596,6 +614,7 @@ function Home({
           <span><kbd>Alt</kbd>+<kbd>1</kbd> / <kbd>2</kbd> серверы / скрипты</span>
           <span><kbd>Ctrl</kbd>+<kbd>Tab</kbd> след. вкладка</span>
           <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C/V</kbd> копировать/вставить</span>
+          <span><kbd>Ctrl</kbd>+<kbd>,</kbd> настройки</span>
           <span>ПКМ по файлу, вкладке или серверу — меню действий</span>
         </div>
       </div>

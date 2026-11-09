@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, AuthMethod, configJumpText, errorText, Forward, Jump, Server, SshConfigInfo } from "../lib/api";
+import { pickFolder as pickLocalFolder, useSettings } from "../lib/settings";
 import { useUi } from "../lib/ui";
 import { useScripts } from "./Scripts";
 import { ForwardFields, forwardText, KIND_HINTS, newForward } from "./Ports";
@@ -40,6 +41,7 @@ function goesThrough(s: Server, id: string, all: Server[], depth = 0): boolean {
 
 export function ServerDialog({ server, servers, folders, folder, onClose, onSaved }: Props) {
   const ui = useUi();
+  const { settings } = useSettings();
   const { scripts, edit: editScript } = useScripts();
   const [s, setS] = useState<Server>(() => ({ ...empty, group: folder ?? "", ...server }));
   const [secret, setSecret] = useState("");
@@ -110,6 +112,7 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
         username: p.username.trim(),
         port: Number(p.port) || 22,
         group: s.group?.trim() || null,
+        downloadDir: s.downloadDir?.trim() || null,
         jump: buildJump(),
       };
       const js = jumpMode === "custom" ? (jumpForget ? "" : jumpSecret || undefined) : undefined;
@@ -317,6 +320,28 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
           <label className="field">
             <span>Папка на сервере для файловой панели</span>
             <input value={s.remoteDir ?? ""} onChange={(e) => set("remoteDir", e.target.value)} placeholder="домашняя папка" spellCheck={false} />
+          </label>
+          <label className="field">
+            <span>Папка для загрузок с этого сервера</span>
+            <div className="row">
+              <input
+                value={s.downloadDir ?? ""}
+                onChange={(e) => set("downloadDir", e.target.value)}
+                placeholder={settings.downloadDir ? `как в настройках: ${settings.downloadDir}` : "как в настройках: папка «Загрузки»"}
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="btn"
+                onClick={async () => {
+                  const d = await pickLocalFolder("Папка для загрузок с этого сервера", s.downloadDir || settings.downloadDir);
+                  if (d) set("downloadDir", d);
+                }}
+              >
+                Выбрать…
+              </button>
+            </div>
+            <span className="hint">Для «Скачать в папку загрузок» в меню файлов сервера.</span>
           </label>
           <div className="field">
             <span>Цвет</span>
