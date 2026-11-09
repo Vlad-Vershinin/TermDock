@@ -206,7 +206,7 @@ impl Forwards {
         match spec.kind {
             ForwardKind::Local | ForwardKind::Dynamic => {
                 if spec.kind == ForwardKind::Local && (spec.dest_host.trim().is_empty() || spec.dest_port == 0) {
-                    return Err("не указан адрес назначения".into());
+                    return Err(tr!("не указан адрес назначения", "no destination address"));
                 }
                 let listener = TcpListener::bind((spec.bind_host.as_str(), spec.bind_port)).await.map_err(|e| bind_error(spec, e))?;
                 let port = listener.local_addr().map(|a| a.port() as u32).unwrap_or(spec.bind_port as u32);
@@ -216,7 +216,7 @@ impl Forwards {
             }
             ForwardKind::Remote => {
                 if spec.dest_host.trim().is_empty() || spec.dest_port == 0 {
-                    return Err("не указан адрес назначения".into());
+                    return Err(tr!("не указан адрес назначения", "no destination address"));
                 }
                 let target = || RemoteTarget { dest_host: spec.dest_host.clone(), dest_port: spec.dest_port, run: run.clone() };
                 // Register before asking, so early connections are not rejected.
@@ -233,9 +233,10 @@ impl Forwards {
                     other => {
                         self.remote.map.lock().unwrap().remove(&(spec.bind_port as u32));
                         Err(match other {
-                            Err(_) => "сервер не ответил на запрос проброса".into(),
-                            _ => format!(
+                            Err(_) => tr!("сервер не ответил на запрос проброса", "the server didn't answer the forwarding request"),
+                            _ => tr!(
                                 "сервер отказал в пробросе порта {} (порт занят или запрещено настройкой AllowTcpForwarding)",
+                                "the server refused to forward port {} (the port is busy or AllowTcpForwarding forbids it)",
                                 spec.bind_port
                             ),
                         })
@@ -270,10 +271,13 @@ fn status_of(e: &Entry) -> ForwardStatus {
 fn bind_error(spec: &Forward, e: std::io::Error) -> String {
     let addr = format!("{}:{}", spec.bind_host, spec.bind_port);
     match e.kind() {
-        std::io::ErrorKind::AddrInUse => format!("порт {addr} уже занят другой программой"),
-        std::io::ErrorKind::PermissionDenied => format!("нет прав открыть порт {addr} (порты ниже 1024 требуют прав администратора)"),
-        std::io::ErrorKind::AddrNotAvailable => format!("адрес {} недоступен на этом компьютере", spec.bind_host),
-        _ => format!("не удалось открыть порт {addr}: {e}"),
+        std::io::ErrorKind::AddrInUse => tr!("порт {addr} уже занят другой программой", "port {addr} is already used by another program"),
+        std::io::ErrorKind::PermissionDenied => tr!(
+            "нет прав открыть порт {addr} (порты ниже 1024 требуют прав администратора)",
+            "no permission to open port {addr} (ports below 1024 need administrator rights)"
+        ),
+        std::io::ErrorKind::AddrNotAvailable => tr!("адрес {} недоступен на этом компьютере", "address {} isn't available on this computer", spec.bind_host),
+        _ => tr!("не удалось открыть порт {addr}: {e}", "couldn't open port {addr}: {e}"),
     }
 }
 

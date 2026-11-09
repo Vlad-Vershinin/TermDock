@@ -210,7 +210,7 @@ enum Item<S, D> {
 }
 
 fn plan_upload(local: &Path, remote_dir: &str, out: &mut Vec<Item<PathBuf, String>>) -> Result<(), String> {
-    let name = local.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or("Некорректный путь")?;
+    let name = local.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| tr!("Некорректный путь", "Invalid path"))?;
     let remote = join_remote(remote_dir, &name);
     let meta = std::fs::metadata(local).map_err(|e| format!("{}: {e}", local.display()))?;
     if meta.is_dir() {
@@ -303,7 +303,7 @@ where
 /// Creates a remote directory, ignoring "already exists".
 async fn ensure_remote_dir(sftp: &SftpSession, d: &str) -> Result<(), String> {
     if sftp.create_dir(d).await.is_err() && !sftp.try_exists(d).await.unwrap_or(false) {
-        return Err(format!("Не удалось создать каталог {d}"));
+        return Err(tr!("Не удалось создать каталог {d}", "Couldn't create folder {d}"));
     }
     Ok(())
 }
@@ -383,10 +383,10 @@ fn check_same_server(remotes: &[String], dst_dir: &str) -> Result<(), String> {
         let src = rp.trim_end_matches('/');
         let parent = src.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
         if parent == dst {
-            return Err(format!("{src}: файл уже находится в этой папке"));
+            return Err(tr!("{src}: файл уже находится в этой папке", "{src}: already in this folder"));
         }
         if dst == src || dst.starts_with(&format!("{src}/")) {
-            return Err(format!("{src}: нельзя скопировать папку внутрь самой себя"));
+            return Err(tr!("{src}: нельзя скопировать папку внутрь самой себя", "{src}: can't copy a folder into itself"));
         }
     }
     Ok(())
@@ -450,7 +450,11 @@ const MAX_EDIT_LARGE: u64 = 100 * 1024 * 1024;
 
 fn check_size(path: &str, size: u64, allow_large: bool) -> Result<(), String> {
     if size > MAX_EDIT_LARGE {
-        Err(format!("{path}: файл слишком большой для встроенного редактора ({} МБ, максимум 100 МБ)", size / 1024 / 1024))
+        Err(tr!(
+            "{path}: файл слишком большой для встроенного редактора ({} МБ, максимум 100 МБ)",
+            "{path}: the file is too large for the built-in editor ({} MB, 100 MB max)",
+            size / 1024 / 1024
+        ))
     } else if size > MAX_EDIT && !allow_large {
         Err(format!("TOO_BIG|{size}"))
     } else {
@@ -502,7 +506,7 @@ pub async fn write_remote_text(sftp: &SftpSession, path: &str, content: &str, en
 /// Creates an empty file; fails if it already exists.
 pub async fn create_remote_file(sftp: &SftpSession, path: &str) -> Result<(), String> {
     if sftp.try_exists(path).await.unwrap_or(false) {
-        return Err(format!("{path}: уже существует"));
+        return Err(tr!("{path}: уже существует", "{path}: already exists"));
     }
     let mut f = sftp
         .open_with_flags(path, OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE)
@@ -518,7 +522,7 @@ pub async fn create_local_file(path: &str) -> Result<(), String> {
         .open(path)
         .await
         .map(|_| ())
-        .map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { format!("{path}: уже существует") } else { format!("{path}: {e}") })
+        .map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { tr!("{path}: уже существует", "{path}: already exists") } else { format!("{path}: {e}") })
 }
 
 #[cfg(test)]

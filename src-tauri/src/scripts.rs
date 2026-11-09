@@ -45,7 +45,7 @@ impl Scripts {
 
     pub fn upsert(&self, mut script: Script) -> Result<Script, String> {
         if script.name.trim().is_empty() {
-            return Err("Укажите название скрипта".into());
+            return Err(tr!("Укажите название скрипта", "Enter a script name"));
         }
         if script.id.is_empty() {
             script.id = uuid::Uuid::new_v4().to_string();

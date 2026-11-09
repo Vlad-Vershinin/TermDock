@@ -40,7 +40,7 @@ impl Codec {
                 Some(e) if e == encoding_rs::UTF_16LE => Codec::Utf16 { le: true },
                 Some(e) if e == encoding_rs::UTF_16BE => Codec::Utf16 { le: false },
                 Some(e) if e != encoding_rs::REPLACEMENT => Codec::Other(e),
-                _ => return Err(format!("неизвестная кодировка: {name}")),
+                _ => return Err(tr!("неизвестная кодировка: {name}", "unknown encoding: {name}")),
             },
         })
     }
@@ -72,7 +72,9 @@ fn looks_binary(b: &[u8]) -> bool {
     b.iter().take(8192).any(|&c| c == 0)
 }
 
-const BINARY: &str = "похоже на двоичный файл — встроенный редактор открывает только текст";
+fn binary_error() -> String {
+    tr!("похоже на двоичный файл — встроенный редактор открывает только текст", "looks like a binary file — the built-in editor opens text only")
+}
 
 /// Decodes file bytes. `forced` re-decodes in a user-chosen encoding (with replacement
 /// characters if the bytes don't fit); otherwise BOM → UTF-8 → charset detection.
@@ -91,7 +93,7 @@ pub fn decode(bytes: &[u8], forced: Option<&str>) -> Result<Decoded, String> {
             None => {
                 // UTF-16 always has a BOM at this point, so NULs mean binary data.
                 if looks_binary(bytes) {
-                    return Err(BINARY.into());
+                    return Err(binary_error());
                 }
                 if std::str::from_utf8(bytes).is_ok() {
                     (Codec::Utf8, bytes, false)
@@ -104,7 +106,7 @@ pub fn decode(bytes: &[u8], forced: Option<&str>) -> Result<Decoded, String> {
         },
     };
     if forced.is_some() && !matches!(codec, Codec::Utf16 { .. }) && looks_binary(body) {
-        return Err(BINARY.into());
+        return Err(binary_error());
     }
     let (text, lossy) = decode_with(codec, body);
     // chardetng reports KOI8-U for any KOI8; without Ukrainian letters both decode the same,
@@ -146,8 +148,9 @@ fn decode_with(codec: Codec, b: &[u8]) -> (String, bool) {
 
 fn unrepresentable(text: &str, at: usize, c: char, enc: &str) -> String {
     let line = text[..at].matches('\n').count() + 1;
-    format!(
+    tr!(
         "символ «{c}» (U+{:04X}, строка {line}) нельзя сохранить в кодировке {enc}. Выберите для сохранения UTF-8 (или уберите этот символ)",
+        "character \"{c}\" (U+{:04X}, line {line}) can't be saved in the {enc} encoding. Choose UTF-8 for saving (or remove this character)",
         c as u32
     )
 }

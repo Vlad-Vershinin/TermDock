@@ -216,7 +216,7 @@ impl Store {
     pub fn rename_folder(&self, from: &str, to: &str) -> Result<(), String> {
         let to = to.trim();
         if to.is_empty() {
-            return Err("Укажите название папки".into());
+            return Err(tr!("Укажите название папки", "Enter a folder name"));
         }
         let mut list = self.servers.lock().unwrap();
         for s in list.iter_mut().filter(|s| s.folder() == Some(from)) {
@@ -267,7 +267,7 @@ fn write_json<T: Serialize + ?Sized>(path: &PathBuf, value: &T) -> Result<(), St
 pub fn set_secret(server_id: &str, secret: &str) -> Result<(), String> {
     keyring::Entry::new(KEYRING_SERVICE, server_id)
         .and_then(|e| e.set_password(secret))
-        .map_err(|e| format!("Не удалось сохранить пароль в системное хранилище: {e}"))
+        .map_err(|e| tr!("Не удалось сохранить пароль в системное хранилище: {e}", "Couldn't save the password to the system keychain: {e}"))
 }
 
 pub fn get_secret(server_id: &str) -> Option<String> {

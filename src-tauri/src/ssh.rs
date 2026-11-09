@@ -141,7 +141,7 @@ pub struct Sessions {
 
 impl Sessions {
     pub fn get(&self, id: &str) -> Result<Arc<SshSession>, String> {
-        self.map.lock().unwrap().get(id).cloned().ok_or_else(|| "Сессия не найдена или закрыта".to_string())
+        self.map.lock().unwrap().get(id).cloned().ok_or_else(|| tr!("Сессия не найдена или закрыта", "Session not found or closed"))
     }
     fn insert(&self, id: String, s: Arc<SshSession>) {
         self.map.lock().unwrap().insert(id, s);
@@ -196,12 +196,12 @@ async fn authenticate(handle: &mut Handle<Client>, hop: &Hop) -> Result<(), Stri
             }
         }
         AuthMethod::Key => {
-            let path = hop.key_path.clone().filter(|p| !p.trim().is_empty()).ok_or("Не указан путь к ключу")?;
+            let path = hop.key_path.clone().filter(|p| !p.trim().is_empty()).ok_or_else(|| tr!("Не указан путь к ключу", "No key path given"))?;
             let path = expand_tilde(&path);
             let key = match keys::load_secret_key(&path, secret.as_deref()) {
                 Ok(k) => k,
                 Err(keys::Error::KeyIsEncrypted) if secret.is_none() => return Err("NEED_SECRET".into()),
-                Err(e) => return Err(format!("Не удалось прочитать ключ {}: {e}", path.display())),
+                Err(e) => return Err(tr!("Не удалось прочитать ключ {}: {e}", "Couldn't read key {}: {e}", path.display())),
             };
             let hash = handle.best_supported_rsa_hash().await.map_err(|e| e.to_string())?.flatten();
             let res = handle
@@ -227,13 +227,13 @@ pub async fn connect_agent() -> Result<Agent, String> {
     #[cfg(unix)]
     {
         let sock = std::env::var_os("SSH_AUTH_SOCK").filter(|s| !s.is_empty());
-        let sock = sock.ok_or("SSH-агент не запущен: переменная SSH_AUTH_SOCK не задана")?;
+        let sock = sock.ok_or_else(|| tr!("SSH-агент не запущен: переменная SSH_AUTH_SOCK не задана", "The SSH agent isn't running: SSH_AUTH_SOCK isn't set"))?;
         match keys::agent::client::AgentClient::connect_uds(&sock).await {
             Ok(a) => Ok(a.dynamic()),
             Err(keys::Error::IO(e)) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused) => {
-                Err("SSH-агент не запущен: его сокет (SSH_AUTH_SOCK) не отвечает".into())
+                Err(tr!("SSH-агент не запущен: его сокет (SSH_AUTH_SOCK) не отвечает", "The SSH agent isn't running: its socket (SSH_AUTH_SOCK) doesn't respond"))
             }
-            Err(e) => Err(format!("Не удалось подключиться к SSH-агенту: {e}")),
+            Err(e) => Err(tr!("Не удалось подключиться к SSH-агенту: {e}", "Couldn't connect to the SSH agent: {e}")),
         }
     }
     #[cfg(windows)]
@@ -244,12 +244,15 @@ pub async fn connect_agent() -> Result<Agent, String> {
         }
         match AgentClient::connect_pageant().await {
             Ok(a) => Ok(a.dynamic()),
-            Err(_) => Err("SSH-агент не запущен: не найдены ни служба OpenSSH Authentication Agent, ни Pageant".into()),
+            Err(_) => Err(tr!(
+                "SSH-агент не запущен: не найдены ни служба OpenSSH Authentication Agent, ни Pageant",
+                "The SSH agent isn't running: neither the OpenSSH Authentication Agent service nor Pageant was found"
+            )),
         }
     }
     #[cfg(not(any(unix, windows)))]
     {
-        Err("SSH-агент не поддерживается на этой системе".into())
+        Err(tr!("SSH-агент не поддерживается на этой системе", "The SSH agent isn't supported on this system"))
     }
 }
 
@@ -260,9 +263,9 @@ async fn agent_auth(handle: &mut Handle<Client>, user: &str) -> Result<(), Strin
     let ids = agent
         .request_identities()
         .await
-        .map_err(|e| format!("SSH-агент не отвечает: {e}"))?;
+        .map_err(|e| tr!("SSH-агент не отвечает: {e}", "The SSH agent doesn't respond: {e}"))?;
     if ids.is_empty() {
-        return Err("В SSH-агенте нет ключей — добавьте ключ командой ssh-add".into());
+        return Err(tr!("В SSH-агенте нет ключей — добавьте ключ командой ssh-add", "The SSH agent has no keys — add one with ssh-add"));
     }
     let hash = handle.best_supported_rsa_hash().await.map_err(|e| e.to_string())?.flatten();
     for id in ids {
@@ -275,10 +278,10 @@ async fn agent_auth(handle: &mut Handle<Client>, user: &str) -> Result<(), Strin
             Ok(_) => {}
             // The agent may refuse to sign (e.g. a confirm-only key the user declined): try the next one.
             Err(russh::AgentAuthError::Key(_)) => {}
-            Err(e) => return Err(format!("Ошибка аутентификации через SSH-агент: {e}")),
+            Err(e) => return Err(tr!("Ошибка аутентификации через SSH-агент: {e}", "SSH agent authentication error: {e}")),
         }
     }
-    Err("Сервер отклонил все ключи из SSH-агента".into())
+    Err(tr!("Сервер отклонил все ключи из SSH-агента", "The server rejected all keys from the SSH agent"))
 }
 
 async fn keyboard_interactive(handle: &mut Handle<Client>, user: &str, password: &str) -> Result<bool, String> {
@@ -336,19 +339,19 @@ async fn open_hop(
         Some(jump) => {
             let channel = tokio::time::timeout(CONNECT_TIMEOUT, jump.channel_open_direct_tcpip(hop.host.clone(), hop.port as u32, "127.0.0.1", 0))
                 .await
-                .map_err(|_| format!("Таймаут: сервер-посредник не открыл туннель до {}:{}", hop.host, hop.port))?
-                .map_err(|e| format!("Сервер-посредник не смог подключиться к {}:{}: {e}", hop.host, hop.port))?;
+                .map_err(|_| tr!("Таймаут: сервер-посредник не открыл туннель до {}:{}", "Timeout: the jump server didn't open a tunnel to {}:{}", hop.host, hop.port))?
+                .map_err(|e| tr!("Сервер-посредник не смог подключиться к {}:{}: {e}", "The jump server couldn't connect to {}:{}: {e}", hop.host, hop.port))?;
             tokio::time::timeout(CONNECT_TIMEOUT, client::connect_stream(config, channel.into_stream(), handler)).await
         }
     };
     let mut handle = match res {
-        Err(_) => return Err("Таймаут подключения (15 с)".into()),
+        Err(_) => return Err(tr!("Таймаут подключения (15 с)", "Connection timeout (15 s)")),
         Ok(Ok(h)) => h,
         Ok(Err(e)) => {
             return Err(match verdict.lock().unwrap().clone() {
                 HostKeyVerdict::Unknown { fingerprint, algorithm } => format!("HOSTKEY_UNKNOWN|{fingerprint}|{algorithm}"),
                 HostKeyVerdict::Changed { fingerprint } => format!("HOSTKEY_CHANGED|{fingerprint}"),
-                HostKeyVerdict::None => format!("Ошибка подключения: {e}"),
+                HostKeyVerdict::None => tr!("Ошибка подключения: {e}", "Connection error: {e}"),
             })
         }
     };
@@ -368,7 +371,7 @@ fn jump_error(hop: &Hop, e: String) -> String {
         };
         format!("JUMP|{}|{}|{auth}|{e}", hop.id, hop.label())
     } else {
-        format!("Сервер-посредник {}: {e}", hop.label())
+        tr!("Сервер-посредник {}: {e}", "Jump server {}: {e}", hop.label())
     }
 }
 
@@ -390,7 +393,7 @@ pub async fn open_chain(hops: &[Hop], known_hosts: &std::path::Path) -> Result<C
         ..Default::default()
     });
 
-    let last = hops.len().checked_sub(1).ok_or("Не указан сервер")?;
+    let last = hops.len().checked_sub(1).ok_or_else(|| tr!("Не указан сервер", "No server given"))?;
     let mut chain: Vec<Handle<Client>> = Vec::with_capacity(hops.len());
     let remote = Arc::new(RemoteForwards::default());
     for (i, hop) in hops.iter().enumerate() {
@@ -446,7 +449,7 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: TermChannel)
         // Chunks that arrive back to back are merged: one IPC message per few ms instead of one per
         // SSH packet keeps the UI responsive while a busy server floods the terminal.
         const MAX_BATCH: usize = 64 * 1024;
-        let mut reason = "Соединение закрыто".to_string();
+        let mut reason = tr!("Соединение закрыто", "Connection closed");
         let mut buf: Vec<u8> = Vec::new();
         'outer: loop {
             let msg = if buf.is_empty() {
@@ -469,7 +472,7 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: TermChannel)
                         break 'outer;
                     }
                 }
-                Some(ChannelMsg::ExitStatus { exit_status }) => reason = format!("Сессия завершена (код {exit_status})"),
+                Some(ChannelMsg::ExitStatus { exit_status }) => reason = tr!("Сессия завершена (код {exit_status})", "Session ended (exit code {exit_status})"),
                 Some(ChannelMsg::Close) | None => break,
                 Some(_) => {}
             }
@@ -497,11 +500,11 @@ async fn write_loop(writer: ChannelWriteHalf<Msg>, mut rx: mpsc::UnboundedReceiv
 
 impl SshSession {
     pub fn write(&self, data: Vec<u8>) -> Result<(), String> {
-        self.input.send(Input::Data(data)).map_err(|_| "Сессия закрыта".to_string())
+        self.input.send(Input::Data(data)).map_err(|_| tr!("Сессия закрыта", "Session closed"))
     }
 
     pub fn resize(&self, cols: u32, rows: u32) -> Result<(), String> {
-        self.input.send(Input::Resize(cols, rows)).map_err(|_| "Сессия закрыта".to_string())
+        self.input.send(Input::Resize(cols, rows)).map_err(|_| tr!("Сессия закрыта", "Session closed"))
     }
 
     /// Lazily opens one SFTP subsystem channel per session and reuses it.
@@ -514,7 +517,7 @@ impl SshSession {
         channel.request_subsystem(true, "sftp").await.map_err(|e| e.to_string())?;
         let sftp = SftpSession::new(channel.into_stream())
             .await
-            .map_err(|e| format!("SFTP недоступен на сервере: {e}"))?;
+            .map_err(|e| tr!("SFTP недоступен на сервере: {e}", "SFTP isn't available on the server: {e}"))?;
         sftp.set_timeout(60);
         let sftp = Arc::new(sftp);
         *guard = Some(sftp.clone());
@@ -538,7 +541,7 @@ impl SshSession {
             }
             Ok(out)
         };
-        tokio::time::timeout(timeout, run).await.map_err(|_| "Таймаут выполнения команды".to_string())?
+        tokio::time::timeout(timeout, run).await.map_err(|_| tr!("Таймаут выполнения команды", "Command timed out"))?
     }
 
     /// Basic server telemetry: Linux / macOS / FreeBSD via `sh`, Windows via PowerShell.
@@ -562,7 +565,7 @@ impl SshSession {
             }
         }
         let Some((flavour, mut stats)) = found else {
-            return Err("Не удалось получить телеметрию: неподдерживаемая система".into());
+            return Err(tr!("Не удалось получить телеметрию: неподдерживаемая система", "Couldn't get telemetry: unsupported system"));
         };
         let mut state = self.stats_state.lock().unwrap();
         state.flavour = Some(flavour);

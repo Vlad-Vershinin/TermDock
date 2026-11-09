@@ -86,17 +86,25 @@ impl Settings {
 pub struct SettingsStore {
     path: PathBuf,
     value: Mutex<Settings>,
+    /// Neither settings.json nor servers.json existed at startup: a fresh install, where the UI
+    /// may pick the language from the OS locale (upgrades keep the Russian default).
+    first_run: bool,
 }
 
 impl SettingsStore {
     pub fn load(dir: &Path) -> Self {
         let path = dir.join("settings.json");
+        let first_run = !path.exists() && !dir.join("servers.json").exists();
         let value = std::fs::read_to_string(&path)
             .ok()
             .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
             .unwrap_or_default()
             .sanitize();
-        Self { path, value: Mutex::new(value) }
+        Self { path, value: Mutex::new(value), first_run }
+    }
+
+    pub fn first_run(&self) -> bool {
+        self.first_run
     }
 
     pub fn get(&self) -> Settings {
@@ -107,7 +115,7 @@ impl SettingsStore {
         let s = s.sanitize();
         let json = serde_json::to_string_pretty(&s).map_err(|e| e.to_string())?;
         let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).and_then(|_| std::fs::rename(&tmp, &self.path)).map_err(|e| format!("Не удалось сохранить настройки: {e}"))?;
+        std::fs::write(&tmp, json).and_then(|_| std::fs::rename(&tmp, &self.path)).map_err(|e| tr!("Не удалось сохранить настройки: {e}", "Couldn't save settings: {e}"))?;
         *self.value.lock().unwrap() = s.clone();
         Ok(s)
     }

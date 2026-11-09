@@ -1,3 +1,6 @@
+#[macro_use]
+mod i18n;
+
 mod dragout;
 mod files;
 mod forward;
@@ -56,7 +59,7 @@ fn save_server(store: State<Store>, mut server: Server, secret: Option<String>, 
         server.id = uuid::Uuid::new_v4().to_string();
     }
     if server.host.trim().is_empty() || server.username.trim().is_empty() {
-        return Err("Укажите хост и пользователя".into());
+        return Err(tr!("Укажите хост и пользователя", "Enter the host and user"));
     }
     let previous = store.get(&server.id);
     server.has_secret = previous.as_ref().map(|p| p.has_secret).unwrap_or(false);
@@ -69,7 +72,7 @@ fn save_server(store: State<Store>, mut server: Server, secret: Option<String>, 
     match server.jump.as_mut() {
         Some(j) if j.server_id.as_deref().is_some_and(|id| !id.is_empty()) => {
             if j.server_id.as_deref() == Some(server.id.as_str()) {
-                return Err("Сервер не может быть посредником для самого себя".into());
+                return Err(tr!("Сервер не может быть посредником для самого себя", "A server can't be its own jump server"));
             }
             store::delete_secret(&jump_id);
         }
@@ -78,7 +81,7 @@ fn save_server(store: State<Store>, mut server: Server, secret: Option<String>, 
             j.host = j.host.trim().to_string();
             j.username = j.username.trim().to_string();
             if j.username.is_empty() {
-                return Err("Укажите пользователя сервера-посредника".into());
+                return Err(tr!("Укажите пользователя сервера-посредника", "Enter the jump server user"));
             }
             if j.port == 0 {
                 j.port = 22;
@@ -188,7 +191,7 @@ fn config_jumps(cfg: &SshConfig, value: &str, seen: &mut Vec<String>) -> Result<
     for (i, spec) in sshconfig::parse_proxy_jump(value).into_iter().enumerate() {
         let alias = spec.host.to_lowercase();
         if seen.contains(&alias) {
-            return Err(format!("ProxyJump в ~/.ssh/config ссылается по кругу (на «{}»)", spec.host));
+            return Err(tr!("ProxyJump в ~/.ssh/config ссылается по кругу (на «{}»)", "ProxyJump in ~/.ssh/config forms a loop (at \"{}\")", spec.host));
         }
         seen.push(alias);
         let hc = cfg.resolve(&spec.host);
@@ -240,14 +243,14 @@ fn config_route(cfg: &SshConfig, host: &str, port: u16, with_jumps: bool) -> Res
 /// A server without a jump host in the app gets its ProxyJump from ~/.ssh/config, if any.
 fn resolve_hops(store: &Store, server: &Server, seen: &mut Vec<String>) -> Result<Vec<Hop>, String> {
     if seen.contains(&server.id) {
-        return Err(format!("Серверы-посредники ссылаются друг на друга по кругу (на «{}»)", server.name));
+        return Err(tr!("Серверы-посредники ссылаются друг на друга по кругу (на «{}»)", "Jump servers refer to each other in a loop (at \"{}\")", server.name));
     }
     seen.push(server.id.clone());
     let mut hops = match &server.jump {
         Some(j) if j.server_id.as_deref().is_some_and(|id| !id.is_empty()) => {
             let via = store
                 .get(j.server_id.as_deref().unwrap())
-                .ok_or_else(|| format!("Сервер-посредник для «{}» не найден", server.name))?;
+                .ok_or_else(|| tr!("Сервер-посредник для «{}» не найден", "The jump server for \"{}\" wasn't found", server.name))?;
             resolve_hops(store, &via, seen)?
         }
         Some(j) if j.is_custom() => {
@@ -299,7 +302,7 @@ async fn ssh_connect(
     rows: u32,
     events: TermChannel,
 ) -> Result<String, String> {
-    let server = store.get(&server_id).ok_or("Сервер не найден")?;
+    let server = store.get(&server_id).ok_or_else(|| tr!("Сервер не найден", "Server not found"))?;
     let typed = secrets.unwrap_or_default();
     let accept = accept.unwrap_or_default();
     let mut hops = resolve_hops(&store, &server, &mut Vec::new())?;
@@ -425,7 +428,15 @@ fn get_settings(settings: State<SettingsStore>) -> Settings {
 
 #[tauri::command]
 fn save_settings(settings: State<SettingsStore>, value: Settings) -> Result<Settings, String> {
-    settings.save(value)
+    let saved = settings.save(value)?;
+    i18n::set_language(&saved.language);
+    Ok(saved)
+}
+
+/// True on a fresh install (no settings.json / servers.json yet): the UI then picks the language.
+#[tauri::command]
+fn settings_first_run(settings: State<SettingsStore>) -> bool {
+    settings.first_run()
 }
 
 /// The folder for "download to the downloads folder": the server's own (`server_dir`), else the
@@ -443,9 +454,9 @@ fn download_dir(settings: State<SettingsStore>, server_dir: Option<String>, glob
 fn open_local_path(app: AppHandle, path: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     if !std::path::Path::new(&path).exists() {
-        return Err(format!("Файл не найден: {path}"));
+        return Err(tr!("Файл не найден: {path}", "File not found: {path}"));
     }
-    app.opener().open_path(&path, None::<&str>).map_err(|e| format!("Не удалось открыть {path}: {e}"))
+    app.opener().open_path(&path, None::<&str>).map_err(|e| tr!("Не удалось открыть {path}: {e}", "Couldn't open {path}: {e}"))
 }
 
 // ---------- files ----------
@@ -634,7 +645,9 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             app.manage(Store::load(dir.clone()));
             app.manage(Scripts::load(dir.clone()));
-            app.manage(SettingsStore::load(&dir));
+            let settings = SettingsStore::load(&dir);
+            i18n::set_language(&settings.get().language);
+            app.manage(settings);
             app.manage(Paths { known_hosts: dir.join("known_hosts") });
             app.manage(Sessions::default());
             app.manage(Transfers::default());
@@ -655,6 +668,7 @@ pub fn run() {
             delete_script,
             get_settings,
             save_settings,
+            settings_first_run,
             download_dir,
             open_local_path,
             ssh_connect,
