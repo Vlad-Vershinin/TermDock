@@ -4,7 +4,10 @@ Guide for AI coding agents working on **TermDock** — a desktop SSH client: ser
 
 ## Language rules
 
-- **UI text and Rust error messages shown to users are in Russian.** Keep new strings Russian and consistent with the existing tone.
+- **The UI is bilingual: Russian (default, source of truth) and English** (`language` setting, switches live). Never hardcode user-visible text:
+  - Frontend: add a key to **both** `src/lib/locales/ru.ts` and `en.ts` (the `Dict` type makes a missing `en` key a build error) and use `const tr = useT()` in components, or the non-hook `t()` from `lib/i18n.ts` in callbacks/modules outside React. `{name}` params; plurals are objects keyed by `Intl.PluralRules` categories (`one`/`few`/`many`/`other`) with the count in `n`.
+  - Rust: user-facing error strings go through `tr!("русский {x}", "english {x}", …)` (`i18n.rs`, a `format!` per language). Protocol codes (`NEED_SECRET`, `HOSTKEY_*`, `JUMP|…`, `CANCELLED`, `TOO_BIG|…`) stay untranslated.
+  - Keep Russian consistent with the existing tone; English is concise, standard desktop-app wording. `grep -rnP '[А-Яа-яЁё]' src` should only hit `locales/ru.ts` (and `LANGUAGE_NAMES`).
 - **Code, comments, identifiers, commit messages: English.** Comments are short and explain *why*.
 - `README.md` is user-facing (Russian, written for non-technical readers, with GIFs from `docs/media/`). Don't turn it into developer docs; developer notes belong here.
 
@@ -47,11 +50,12 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `sshconfig.rs` | `~/.ssh/config` parser (Host patterns, HostName, Port, IdentityFile, ProxyJump, Include) |
 | `forward.rs` | Port forwards per session: listeners, SOCKS5, status, stop/start |
 | `files.rs` | Local/remote listing, recursive transfers with progress + cancel, text file read/write |
+| `i18n.rs` | UI language for backend messages (set from settings) and the `tr!(ru, en, args…)` macro |
 | `textcodec.rs` | Editor encodings: detect (BOM / UTF-8 / chardetng), decode, encode back |
 | `stats.rs` | Server telemetry: one script per OS flavour (Linux / macOS / FreeBSD / Windows PowerShell) + parsers |
 | `store.rs` | `Server`, `Jump`, `Forward`, `AuthMethod`; JSON persistence; OS keychain via `keyring` |
 | `scripts.rs` | Saved scripts (`scripts.json`) |
-| `settings.rs` | Global app settings (`settings.json`, every field `#[serde(default)]`, `sanitize()` clamps), download-folder resolution |
+| `settings.rs` | Global app settings (`settings.json`, every field `#[serde(default)]`, `sanitize()` clamps), download-folder resolution, `first_run` (fresh install: the UI picks English unless the OS locale is Russian) |
 | `dragout.rs` | Temp folders / helpers for dragging files out to the OS |
 
 ### Frontend (`src/`)
@@ -67,6 +71,8 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `components/Scripts.tsx`, `Telemetry.tsx`, `Ports.tsx` | Scripts panel/dialog, CPU/RAM/disk widget, port-forward popover |
 | `components/SettingsDialog.tsx` | Settings dialog (gear in the title bar, Ctrl+,): Interface / Terminal / Files; changes apply at once |
 | `lib/api.ts` | **Typed wrappers for every Rust command** + shared TS types (mirror of Rust structs) |
+| `lib/i18n.ts` | `useT()` / `t()` (non-hook), `setLang` (called by `SettingsProvider`, also sets `<html lang>`), plural + `{param}` formatting |
+| `lib/locales/ru.ts`, `en.ts` | Flat UI string dictionaries; `ru` defines the keys, `en: Dict` must match |
 | `lib/ui.tsx` | `useUi()`: `toast`, `dialog`, `confirm`, `prompt`, `menu` (context menu) |
 | `lib/dnd.ts` | Custom pointer-based drag & drop (not HTML5 DnD) |
 | `lib/dragout.ts` | Drag files out of the window into the OS file manager (tauri-plugin-drag) |
