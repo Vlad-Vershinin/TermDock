@@ -126,6 +126,15 @@ Open two servers in one tab or a second connection to the same server - for exam
 - Split buttons in the panel above the terminal, or `Alt+Shift+=` (right) and `Alt+Shift+-` (down).
 - Up to 4 panels in a tab, borders can be moved with the mouse, `Alt+arrow keys` - transition between panels.
 - Ctrl-click a server or `Ctrl+Shift+D` is another tab with the same server.
+- **Drag a tab onto an open terminal** to place it next to it; the highlighted half shows which side. The connection stays open.
+- **Reorder tabs** by dragging them along the tab strip.
+- **Double-click a tab** to rename it (the server keeps its name). An empty name restores the server name.
+
+### 🔗 Links in the terminal
+
+Click a link to open it in the browser, even when the program on the server split a long address over several lines. **Right-click a link** to copy it whole, as one line.
+
+If the link is a browser sign-in that has to return to a program on the server (`redirect_uri=http://localhost:…`, as Claude Code and MCP servers do), TermDock forwards that port for you, so the sign-in completes.
 
 ### 📊 Server load
 
@@ -316,6 +325,7 @@ src/                    React + TypeScript
     dnd.ts              drag & drop
     transfers.tsx transfer queue
     dragout.ts dragging files from application to OS
+    termlinks.ts terminal links, including ones split over several lines
     codemirror.ts languages, theme and editor encodings
 src-tauri/src/          Rust
   ssh.rs connection, authentication (password, key, agent), known_hosts, shell, exec
