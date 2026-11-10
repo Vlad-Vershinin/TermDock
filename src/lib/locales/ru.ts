@@ -238,6 +238,7 @@ export const ru = {
   "home.kSidebars": "серверы / скрипты",
   "home.kNextTab": "след. вкладка",
   "home.kCopyPaste": "копировать/вставить",
+  "home.kPalette": "палитра команд плагинов",
   "home.kSettings": "настройки",
   "home.kContextMenu": "ПКМ по файлу, вкладке или серверу — меню действий",
 

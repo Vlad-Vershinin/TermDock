@@ -758,6 +758,7 @@ function Home({
           <span><kbd>Ctrl</kbd>+<kbd>Tab</kbd> {tr("home.kNextTab")}</span>
           <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C/V</kbd> {tr("home.kCopyPaste")}</span>
           <span><kbd>Ctrl</kbd>+<kbd>,</kbd> {tr("home.kSettings")}</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> {tr("home.kPalette")}</span>
           <span>{tr("home.kContextMenu")}</span>
         </div>
       </div>

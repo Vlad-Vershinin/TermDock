@@ -239,6 +239,7 @@ export const en: Dict = {
   "home.kSidebars": "servers / scripts",
   "home.kNextTab": "next tab",
   "home.kCopyPaste": "copy/paste",
+  "home.kPalette": "plugin command palette",
   "home.kSettings": "settings",
   "home.kContextMenu": "Right-click a file, tab or server for actions",
 
