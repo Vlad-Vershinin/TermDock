@@ -526,6 +526,11 @@ impl SshSession {
 
     /// Runs a command on a separate exec channel (not in the user's shell) and collects its output.
     pub async fn exec(&self, command: &str, timeout: Duration) -> Result<ExecOutput, String> {
+        self.exec_limited(command, timeout, usize::MAX).await
+    }
+
+    /// `exec` that fails once stdout + stderr exceed `max_bytes` (for commands we don't control).
+    pub async fn exec_limited(&self, command: &str, timeout: Duration, max_bytes: usize) -> Result<ExecOutput, String> {
         let run = async {
             let mut ch = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
             ch.exec(true, command).await.map_err(|e| e.to_string())?;
@@ -537,6 +542,10 @@ impl SshSession {
                     ChannelMsg::ExitStatus { exit_status } => out.code = Some(exit_status),
                     ChannelMsg::Close => break,
                     _ => {}
+                }
+                if out.stdout.len() + out.stderr.len() > max_bytes {
+                    let _ = ch.close().await;
+                    return Err(tr!("Вывод команды больше {} МБ", "The command output is over {} MB", max_bytes / 1024 / 1024));
                 }
             }
             Ok(out)

@@ -3,6 +3,7 @@ mod i18n;
 
 mod dragout;
 mod files;
+mod plugins;
 mod forward;
 mod scripts;
 mod settings;
@@ -17,6 +18,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 
 use files::{Entry, Transfers};
+use plugins::{Manifest, PluginInfo, Plugins};
 use scripts::{Script, Scripts};
 use settings::{Settings, SettingsStore};
 use std::collections::HashMap;
@@ -633,6 +635,69 @@ fn cancel_transfer(transfers: State<Transfers>, transfer_id: String) {
     transfers.cancel(&transfer_id);
 }
 
+// ---------- plugins ----------
+// Only the app's own UI calls these: plugin frames are sandboxed and have no IPC access.
+// The UI checks each plugin's permissions before calling on its behalf.
+
+#[tauri::command]
+fn plugin_list(plugins: State<Plugins>) -> Vec<PluginInfo> {
+    plugins.list()
+}
+
+#[tauri::command]
+fn plugins_dir(plugins: State<Plugins>) -> String {
+    plugins.dir().to_string_lossy().into_owned()
+}
+
+#[tauri::command]
+fn plugin_inspect(plugins: State<Plugins>, path: String) -> Result<Manifest, String> {
+    plugins.inspect(std::path::Path::new(&path))
+}
+
+#[tauri::command]
+fn plugin_install(plugins: State<Plugins>, path: String, granted: Vec<String>) -> Result<PluginInfo, String> {
+    plugins.install(std::path::Path::new(&path), granted)
+}
+
+#[tauri::command]
+fn plugin_set_enabled(plugins: State<Plugins>, id: String, enabled: bool, granted: Option<Vec<String>>) -> Result<PluginInfo, String> {
+    plugins.set_enabled(&id, enabled, granted)
+}
+
+#[tauri::command]
+fn plugin_uninstall(plugins: State<Plugins>, id: String) -> Result<(), String> {
+    plugins.uninstall(&id)
+}
+
+#[tauri::command]
+fn plugin_storage_get(plugins: State<Plugins>, id: String) -> Result<serde_json::Value, String> {
+    plugins.storage_get(&id)
+}
+
+#[tauri::command]
+fn plugin_storage_set(plugins: State<Plugins>, id: String, value: serde_json::Value) -> Result<(), String> {
+    plugins.storage_set(&id, &value)
+}
+
+#[derive(serde::Serialize)]
+struct PluginExecOutput {
+    code: Option<u32>,
+    stdout: String,
+    stderr: String,
+}
+
+/// `server.exec` for plugins: a background exec channel, like telemetry.
+#[tauri::command]
+async fn plugin_exec(sessions: State<'_, Sessions>, session_id: String, command: String, timeout_secs: Option<u64>) -> Result<PluginExecOutput, String> {
+    let timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(30).clamp(1, 600));
+    let out = sessions.get(&session_id)?.exec_limited(&command, timeout, 10 * 1024 * 1024).await?;
+    Ok(PluginExecOutput {
+        code: out.code,
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -640,11 +705,25 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_drag::init())
+        // Plugin files for the sandboxed plugin frames (see plugins.rs).
+        .register_uri_scheme_protocol("tdplugin", |ctx, request| {
+            let res = ctx.app_handle().state::<Plugins>().serve(request.uri().path());
+            tauri::http::Response::builder()
+                .status(res.status)
+                .header("Content-Type", res.mime)
+                .header("Content-Security-Policy", plugins::PLUGIN_CSP)
+                .header("Access-Control-Allow-Origin", "*")
+                .header("Cache-Control", "no-store")
+                .header("X-Content-Type-Options", "nosniff")
+                .body(res.body)
+                .unwrap()
+        })
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&dir)?;
             app.manage(Store::load(dir.clone()));
             app.manage(Scripts::load(dir.clone()));
+            app.manage(Plugins::load(&dir));
             let settings = SettingsStore::load(&dir);
             i18n::set_language(&settings.get().language);
             app.manage(settings);
@@ -672,6 +751,15 @@ pub fn run() {
             download_dir,
             open_local_path,
             ssh_connect,
+            plugin_list,
+            plugins_dir,
+            plugin_inspect,
+            plugin_install,
+            plugin_set_enabled,
+            plugin_uninstall,
+            plugin_storage_get,
+            plugin_storage_set,
+            plugin_exec,
             ssh_config_lookup,
             ssh_write,
             ssh_resize,

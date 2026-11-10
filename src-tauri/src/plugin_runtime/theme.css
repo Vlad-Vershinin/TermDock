@@ -1,0 +1,45 @@
+/* TermDock theme for plugin pages (injected before the plugin's own styles; override freely). */
+:root {
+  --bg: #1e1f22;
+  --bg-1: #2b2d30;
+  --bg-2: #313438;
+  --bg-3: #393b40;
+  --line: #393b40;
+  --border-2: #4e5157;
+  --text: #dfe1e5;
+  --muted: #868a91;
+  --accent: #3574f0;
+  --ok: #5fb865;
+  --warn: #e0a641;
+  --err: #f75464;
+  --radius: 6px;
+  --mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  color-scheme: dark;
+  font-family: Inter, "Segoe UI", system-ui, -apple-system, Ubuntu, Cantarell, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-1);
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 10px 12px; }
+h1, h2, h3, h4 { margin: 0 0 8px; font-weight: 600; }
+h1 { font-size: 16px; } h2 { font-size: 14px; } h3, h4 { font-size: 13px; }
+p { margin: 0 0 8px; }
+a { color: #6ea2ff; }
+code, pre, kbd { font-family: var(--mono); font-size: 12px; }
+pre { margin: 0; padding: 8px; background: var(--bg); border-radius: var(--radius); overflow: auto; white-space: pre-wrap; }
+.muted { color: var(--muted); }
+input, button, select, textarea { font: inherit; color: inherit; }
+input, select, textarea { height: 28px; padding: 0 8px; border: 1px solid var(--border-2); border-radius: var(--radius); background: var(--bg); outline: none; }
+textarea { height: auto; padding: 6px 8px; resize: vertical; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 1px solid var(--border-2); border-radius: var(--radius); background: transparent; cursor: pointer; }
+button:hover:not(:disabled) { background: var(--bg-2); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { background: #c94f4f; border-color: #c94f4f; color: #fff; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #4e5157; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
