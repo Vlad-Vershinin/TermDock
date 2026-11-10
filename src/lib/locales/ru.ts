@@ -21,7 +21,7 @@ export const ru = {
 
   // ---- titlebar ----
   "titlebar.panes": " — панелей: {n}",
-  "titlebar.tabHint": "Средний клик — закрыть, ПКМ — дублировать / разделить",
+  "titlebar.tabHint": "Перетащите, чтобы переставить, или на консоль — чтобы разделить экран. Двойной клик — переименовать, средний — закрыть, ПКМ — меню",
   "titlebar.closeTab": "Закрыть вкладку",
   "titlebar.newTab": "Открыть сервер в новой вкладке",
   "titlebar.minimize": "Свернуть",
@@ -205,6 +205,9 @@ export const ru = {
   "app.renameFolder": "Переименовать папку",
   "app.deleteFolderTitle": "Удалить папку «{name}»?",
   "app.deleteFolderText": "Серверы из неё ({n}) останутся в списке, без папки.",
+  "app.renameTab": "Переименовать вкладку",
+  "app.renameTabHint": "двойной клик",
+  "app.resetTabName": "Вернуть название по серверу",
   "app.duplicateTab": "Дублировать в новой вкладке",
   "app.splitRight": "Разделить вправо",
   "app.splitDown": "Разделить вниз",

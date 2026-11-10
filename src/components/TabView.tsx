@@ -1,6 +1,5 @@
 import { useRef } from "react";
-import { Server } from "../lib/api";
-import { SessionStatus, SessionView } from "./SessionView";
+import { SessionStatus } from "./SessionView";
 
 export type SplitDir = "row" | "column";
 
@@ -12,6 +11,8 @@ export interface PaneState {
 
 export interface Tab {
   id: string;
+  /** Name set by the user; otherwise the tab is named after its servers. */
+  title?: string;
   panes: PaneState[];
   /** row = side by side, column = stacked. */
   dir: SplitDir;
@@ -30,16 +31,14 @@ export interface PaneHandlers {
 
 interface Props {
   tab: Tab;
-  servers: Server[];
   visible: boolean;
-  handlers: (paneId: string) => PaneHandlers;
+  /** Persistent container of a pane's SessionView (rendered by App through a portal). */
+  host: (paneId: string) => HTMLElement;
   onSizes: (sizes: number[]) => void;
 }
 
-export function TabView({ tab, servers, visible, handlers, onSizes }: Props) {
+export function TabView({ tab, visible, host, onSizes }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const split = tab.panes.length > 1;
-
   const startResize = (i: number) => (e: React.PointerEvent) => {
     e.preventDefault();
     const rect = ref.current!.getBoundingClientRect();
@@ -69,31 +68,20 @@ export function TabView({ tab, servers, visible, handlers, onSizes }: Props) {
   };
 
   return (
-    <div ref={ref} className={`tabview ${tab.dir}`} style={{ display: visible ? "flex" : "none" }}>
-      {tab.panes.map((p, i) => {
-        const server = servers.find((s) => s.id === p.serverId);
-        const h = handlers(p.id);
-        // Keep each SessionView at a stable position in its keyed wrapper so splitting / closing
-        // neighbours never remounts it (that would drop its SSH connection).
-        return (
-          <div key={p.id} className="pane-wrap" style={{ flex: `${tab.sizes[i] ?? 1} 1 0` }}>
-            {i > 0 ? <div className="pane-splitter" onPointerDown={startResize(i)} /> : null}
-            {server ? (
-              <SessionView
-                paneId={p.id}
-                server={server}
-                visible={visible}
-                focused={tab.focus === p.id}
-                split={split}
-                onFocus={h.onFocus}
-                onStatus={h.onStatus}
-                onSplit={h.onSplit}
-                onClose={h.onClose}
-              />
-            ) : null}
-          </div>
-        );
-      })}
+    <div ref={ref} className={`tabview ${tab.dir}`} style={{ display: visible ? "flex" : "none" }} data-tab-id={tab.id} data-dir={tab.dir}>
+      {tab.panes.map((p, i) => (
+        // SessionViews are not rendered here: App portals them into persistent containers that
+        // are only moved between wrappers, so splitting, closing neighbours or moving a pane to
+        // another tab never remounts one (that would drop its SSH connection).
+        <div key={p.id} className="pane-wrap" style={{ flex: `${tab.sizes[i] ?? 1} 1 0` }} data-pane-id={p.id}>
+          {i > 0 ? <div className="pane-splitter" onPointerDown={startResize(i)} /> : null}
+          <PaneSlot host={host(p.id)} />
+        </div>
+      ))}
     </div>
   );
+}
+
+function PaneSlot({ host }: { host: HTMLElement }) {
+  return <div className="pane-slot" ref={(el) => void (el && host.parentElement !== el && el.appendChild(host))} />;
 }

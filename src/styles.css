@@ -98,6 +98,9 @@ body.resizing-x, body.resizing-x * { cursor: col-resize !important; }
 .tab.active::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -5px; height: 2px; border-radius: 2px; background: var(--accent); }
 .tab-accent { position: absolute; left: 3px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; }
 .tab-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab.dragged { opacity: .55; }
+body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-select: none; }
+.tab-rename { min-width: 60px; max-width: 170px; height: 22px; padding: 0 5px; border: 1px solid var(--accent); border-radius: 4px; background: var(--bg); color: var(--text); font: inherit; outline: none; }
 .tab-close { border: none; background: none; color: var(--muted); cursor: pointer; width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center; opacity: 0; flex: none; }
 .tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
 .tab-close:hover { background: #4e5157; color: var(--text); }
@@ -205,7 +208,14 @@ kbd { display: inline-block; padding: 1px 6px; border-radius: 4px; border: 1px s
 .tabview { position: absolute; inset: 0; gap: 0; }
 .tabview.row { flex-direction: row; }
 .tabview.column { flex-direction: column; }
-.pane-wrap { display: flex; min-width: 0; min-height: 0; }
+.pane-wrap { position: relative; display: flex; min-width: 0; min-height: 0; }
+.pane-slot, .pane-host { flex: 1; display: flex; min-width: 0; min-height: 0; }
+/* Where a tab dragged onto this pane will go. */
+.pane-wrap[data-drop]::after { content: ""; position: absolute; z-index: 30; pointer-events: none; background: rgba(53,116,240,.22); border: 2px solid var(--accent); border-radius: 4px; }
+.pane-wrap[data-drop="left"]::after { left: 0; top: 0; bottom: 0; width: 50%; }
+.pane-wrap[data-drop="right"]::after { right: 0; top: 0; bottom: 0; width: 50%; }
+.pane-wrap[data-drop="top"]::after { left: 0; right: 0; top: 0; height: 50%; }
+.pane-wrap[data-drop="bottom"]::after { left: 0; right: 0; bottom: 0; height: 50%; }
 .tabview.row > .pane-wrap { flex-direction: row; }
 .tabview.column > .pane-wrap { flex-direction: column; }
 .pane-splitter { flex: none; background: var(--bg-1); }

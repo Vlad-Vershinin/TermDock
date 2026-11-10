@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, errorText, Server } from "./lib/api";
@@ -10,12 +11,12 @@ import { TransfersPanel, TransfersProvider, useTransfers } from "./lib/transfers
 import { MenuItem, UiProvider, useUi } from "./lib/ui";
 import { ServerDialog } from "./components/ServerDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
-import { SessionStatus } from "./components/SessionView";
+import { SessionStatus, SessionView } from "./components/SessionView";
 import { groupServers, MAX_SIDEBAR, MIN_SIDEBAR, ServerState, Sidebar } from "./components/Sidebar";
 import { ScriptsPanel, ScriptsProvider, useScripts } from "./components/Scripts";
 import { PaneHandlers, PaneState, SplitDir, Tab, TabView } from "./components/TabView";
-import { TitleBar, TitleTab, WindowEdges } from "./components/TitleBar";
-import { IClose, ICopy, IHome, IKey, ILock, IPlay, IPlus, IScript, ISettings, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
+import { DropSide, TitleBar, TitleTab, WindowEdges } from "./components/TitleBar";
+import { IClose, ICopy, IEdit, IHome, IKey, ILock, IPlay, IPlus, IScript, ISettings, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
 
 const MAX_PANES = 4;
 
@@ -59,6 +60,7 @@ function Main() {
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("td.sidebar") !== "0");
   const [sidebarWidth, setSidebarWidth] = useState(() => Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, readNumber("td.sidebarWidth", 270))));
   const [scriptsOpen, setScriptsOpen] = useState(() => localStorage.getItem("td.scriptsPanel") === "1");
+  const [renaming, setRenaming] = useState<string | null>(null);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -211,26 +213,84 @@ function Main() {
   const handlerCache = useRef(new Map<string, PaneHandlers>());
   const actions = useRef({ focusPane, setPaneStatus, splitTab, closePane });
   actions.current = { focusPane, setPaneStatus, splitTab, closePane };
-  const handlers = useCallback((tabId: string, paneId: string) => {
+  const handlers = useCallback((paneId: string) => {
     let h = handlerCache.current.get(paneId);
     if (!h) {
+      // A pane can move to another tab, so its tab is looked up on each call.
+      const tabId = () => tabsRef.current.find((t) => t.panes.some((p) => p.id === paneId))?.id;
+      const withTab = (f: (tabId: string) => void) => () => {
+        const id = tabId();
+        if (id) f(id);
+      };
       h = {
-        onFocus: () => actions.current.focusPane(tabId, paneId),
+        onFocus: withTab((id) => actions.current.focusPane(id, paneId)),
         onStatus: (s) => actions.current.setPaneStatus(paneId, s),
-        onSplit: (dir) => {
-          actions.current.focusPane(tabId, paneId);
-          actions.current.splitTab(tabId, dir);
-        },
-        onClose: () => actions.current.closePane(tabId, paneId),
+        onSplit: (dir) =>
+          withTab((id) => {
+            actions.current.focusPane(id, paneId);
+            actions.current.splitTab(id, dir);
+          })(),
+        onClose: withTab((id) => actions.current.closePane(id, paneId)),
       };
       handlerCache.current.set(paneId, h);
+    }
+    return h;
+  }, []);
+  // Each pane's SessionView lives in its own container, which TabView only moves around.
+  const paneHosts = useRef(new Map<string, HTMLDivElement>());
+  const paneHost = useCallback((paneId: string) => {
+    let h = paneHosts.current.get(paneId);
+    if (!h) {
+      h = document.createElement("div");
+      h.className = "pane-host";
+      paneHosts.current.set(paneId, h);
     }
     return h;
   }, []);
   useEffect(() => {
     const live = new Set(tabs.flatMap((t) => t.panes.map((p) => p.id)));
     for (const id of handlerCache.current.keys()) if (!live.has(id)) handlerCache.current.delete(id);
+    for (const [id, h] of paneHosts.current)
+      if (!live.has(id)) {
+        h.remove();
+        paneHosts.current.delete(id);
+      }
   }, [tabs]);
+
+  const reorderTab = useCallback((id: string, index: number) => {
+    setTabs((list) => {
+      const tab = list.find((t) => t.id === id);
+      if (!tab) return list;
+      const rest = list.filter((t) => t.id !== id);
+      rest.splice(index, 0, tab);
+      return rest;
+    });
+  }, []);
+
+  /** Moves all panes of tab `srcId` next to pane `paneId` of another tab; the source tab goes away. */
+  const mergeTab = useCallback(
+    (srcId: string, paneId: string, side: DropSide) => {
+      const list = tabsRef.current;
+      const src = list.find((t) => t.id === srcId);
+      const dst = list.find((t) => t.panes.some((p) => p.id === paneId));
+      if (!src || !dst || src.id === dst.id) return;
+      if (src.panes.length + dst.panes.length > MAX_PANES) return ui.toast(tr("app.maxPanes", { n: MAX_PANES }), "error");
+      const i = dst.panes.findIndex((p) => p.id === paneId);
+      const at = side === "right" || side === "bottom" ? i + 1 : i;
+      // The target pane gives half of its space to the incoming ones.
+      const half = (dst.sizes[i] ?? 1) / 2;
+      const sizes = [...dst.sizes];
+      sizes[i] = half;
+      sizes.splice(at, 0, ...src.panes.map(() => half / src.panes.length));
+      const panes = [...dst.panes];
+      panes.splice(at, 0, ...src.panes);
+      const dir: SplitDir = side === "left" || side === "right" ? "row" : "column";
+      const merged: Tab = { ...dst, panes, sizes, dir, focus: src.focus };
+      setTabs(list.filter((t) => t.id !== srcId).map((t) => (t.id === dst.id ? merged : t)));
+      setActive(dst.id);
+    },
+    [ui, tr],
+  );
 
   const activeTab = tabs.find((t) => t.id === active) ?? null;
   const focusedPane = activeTab?.panes.find((p) => p.id === activeTab.focus) ?? null;
@@ -359,7 +419,7 @@ function Main() {
       const focus = t.panes.find((p) => p.id === t.focus) ?? t.panes[0];
       return {
         id: t.id,
-        title: n > 1 ? `${title} (${n})` : title,
+        title: t.title || (n > 1 ? `${title} (${n})` : title),
         status: focus.status,
         color: servers.find((s) => s.id === focus.serverId)?.color,
         panes: t.panes.length,
@@ -424,9 +484,22 @@ function Main() {
   };
   const running = transfers.filter((t) => t.progress.status === "running").length;
 
+  const renameTab = (id: string, title: string | null) => {
+    setRenaming(null);
+    if (title === null) return;
+    const shown = titleTabs.find((t) => t.id === id)?.title;
+    // Confirming the automatic name unchanged must not freeze it.
+    if (title === shown) return;
+    updateTab(id, (t) => ({ ...t, title: title || undefined }));
+  };
+
   const tabMenu = (e: React.MouseEvent, id: string) => {
     setActive(id);
+    const custom = !!tabs.find((t) => t.id === id)?.title;
     ui.menu(e, [
+      { label: tr("app.renameTab"), icon: <IEdit size={13} />, hint: tr("app.renameTabHint"), onClick: () => setRenaming(id) },
+      ...(custom ? [{ label: tr("app.resetTabName"), onClick: () => updateTab(id, (t) => ({ ...t, title: undefined })) }] : []),
+      "-",
       { label: tr("app.duplicateTab"), icon: <ICopy size={13} />, hint: "Ctrl+Shift+D", onClick: () => duplicateTab(id) },
       { label: tr("app.splitRight"), icon: <ISplitRight size={13} />, hint: "Alt+Shift+=", onClick: () => splitTab(id, "row") },
       { label: tr("app.splitDown"), icon: <ISplitDown size={13} />, hint: "Alt+Shift+-", onClick: () => splitTab(id, "column") },
@@ -456,6 +529,11 @@ function Main() {
         onClose={closeTab}
         onTabMenu={tabMenu}
         onNewTab={newTabMenu}
+        onReorder={reorderTab}
+        onMerge={mergeTab}
+        renaming={renaming}
+        onRenameStart={setRenaming}
+        onRename={renameTab}
         left={
           <>
             <button className={`tb-brand ${active === null ? "on" : ""}`} onClick={() => setActive(null)} title={tr("app.home")}>
@@ -506,15 +584,31 @@ function Main() {
         <main className="content">
           {active === null && <Home servers={servers} folders={folders} states={serverStates} onConnect={openSession} onAdd={() => addServer()} />}
           {tabs.map((t) => (
-            <TabView
-              key={t.id}
-              tab={t}
-              servers={servers}
-              visible={t.id === active}
-              handlers={(paneId) => handlers(t.id, paneId)}
-              onSizes={(sizes) => updateTab(t.id, (x) => ({ ...x, sizes }))}
-            />
+            <TabView key={t.id} tab={t} visible={t.id === active} host={paneHost} onSizes={(sizes) => updateTab(t.id, (x) => ({ ...x, sizes }))} />
           ))}
+          {tabs.flatMap((t) =>
+            t.panes.map((p) => {
+              const server = servers.find((s) => s.id === p.serverId);
+              const h = handlers(p.id);
+              return server
+                ? createPortal(
+                    <SessionView
+                      paneId={p.id}
+                      server={server}
+                      visible={t.id === active}
+                      focused={t.focus === p.id}
+                      split={t.panes.length > 1}
+                      onFocus={h.onFocus}
+                      onStatus={h.onStatus}
+                      onSplit={h.onSplit}
+                      onClose={h.onClose}
+                    />,
+                    paneHost(p.id),
+                    p.id,
+                  )
+                : null;
+            }),
+          )}
           {showTransfers && <TransfersPanel onClose={() => setShowTransfers(false)} />}
         </main>
         {scriptsOpen && (

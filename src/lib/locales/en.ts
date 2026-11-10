@@ -22,7 +22,7 @@ export const en: Dict = {
 
   // ---- titlebar ----
   "titlebar.panes": " — {n} panes",
-  "titlebar.tabHint": "Middle-click to close, right-click to duplicate / split",
+  "titlebar.tabHint": "Drag to reorder, or onto a terminal to split the screen. Double-click to rename, middle-click to close, right-click for the menu",
   "titlebar.closeTab": "Close tab",
   "titlebar.newTab": "Open a server in a new tab",
   "titlebar.minimize": "Minimize",
@@ -206,6 +206,9 @@ export const en: Dict = {
   "app.renameFolder": "Rename folder",
   "app.deleteFolderTitle": "Delete folder \"{name}\"?",
   "app.deleteFolderText": { one: "Its server will stay in the list, outside any folder.", other: "Its {n} servers will stay in the list, outside any folder." },
+  "app.renameTab": "Rename tab",
+  "app.renameTabHint": "double-click",
+  "app.resetTabName": "Restore the server name",
   "app.duplicateTab": "Duplicate in new tab",
   "app.splitRight": "Split right",
   "app.splitDown": "Split down",
