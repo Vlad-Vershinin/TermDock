@@ -57,6 +57,8 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `scripts.rs` | Saved scripts (`scripts.json`) |
 | `settings.rs` | Global app settings (`settings.json`, every field `#[serde(default)]`, `sanitize()` clamps), download-folder resolution, `first_run` (fresh install: the UI picks English unless the OS locale is Russian) |
 | `dragout.rs` | Temp folders / helpers for dragging files out to the OS |
+| `plugins.rs` | Plugins: `plugin.json` validation, install from folder / `.zip` (path, symlink, size checks), enabled state + granted permissions (`plugins.json`), per-plugin storage, the `tdplugin://` scheme (`serve`, strict CSP) |
+| `plugin_runtime/` | `runtime.js` (`window.termdock` inside plugin frames, postMessage RPC) and `theme.css`, served at `tdplugin://…/__termdock/` |
 
 ### Frontend (`src/`)
 
@@ -78,8 +80,11 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `lib/dragout.ts` | Drag files out of the window into the OS file manager (tauri-plugin-drag) |
 | `lib/settings.tsx` | `useSettings()`: `settings` + `update(patch)` (live, debounced save to `settings.json`); `DEFAULT_SETTINGS` mirrors Rust |
 | `lib/transfers.tsx` | Transfer queue + `transfer-progress` event listener; Transfers panel ("Показать в папке" / "Открыть" for local files) |
+| `lib/plugins/host.tsx` | `PluginsProvider` / `usePlugins()`: hidden host frames, message routing, permission checks for every call, events to plugins, commands, menus, keybindings, panel state; `PluginFrame` (the sandboxed iframe) |
+| `lib/plugins/types.ts` | Manifest types, `PERMISSIONS` (mirror of Rust), `readContributions`, localized texts (`ltext`), key matching |
+| `components/Plugins.tsx` | Plugin manager dialog (install with permission prompt), command palette (Ctrl+Shift+P), plugin sidebar panel |
 | `lib/termlinks.ts` | Terminal link provider (joins URLs split by soft or hard line breaks), OAuth `redirect_uri=localhost:PORT` detection for auto port-forward |
-| `lib/sessions.ts` | `paneRegistry` (terminals for scripts) and `remotePaneRegistry` (SFTP panes for server→server copy) |
+| `lib/sessions.ts` | `paneRegistry` (terminals for scripts and plugins), `paneEvents` (output / status / focus for the plugin host), `focusedPane`, `remotePaneRegistry` (SFTP panes for server→server copy) |
 | `lib/scripts.ts` | `{{var:default}}` substitution, whole-vs-step run input (`commandBlock`) |
 | `styles.css` | All styling; JetBrains-like dark theme via CSS variables on `:root` |
 
@@ -88,6 +93,8 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 **Add a backend command:** write `#[tauri::command]` in `lib.rs` → add it to `tauri::generate_handler![…]` at the bottom → add a typed wrapper to `api` in `src/lib/api.ts` (names: Rust `snake_case`, args camelCase on the JS side). Custom commands need no capability entry; **plugin** commands do (`src-tauri/capabilities/default.json`).
 
 **Add a field to `Server`:** `store.rs` (`#[serde(default)]` — old `servers.json` files must keep loading) → `Server` interface in `api.ts` → `ServerDialog.tsx`. Keep serde `camelCase`.
+
+**Add a plugin API method:** `plugin_runtime/runtime.js` (the `termdock.*` function, a `call("x.y", params)`) → `handleCall` in `lib/plugins/host.tsx` (validate params with `str()`, check the permission via `NEEDS`) → `docs/plugins/termdock.d.ts` and both `docs/plugins/README*.md`. A new permission goes into `PERMISSIONS` in `plugins.rs` **and** `types.ts`, `DANGEROUS` if it can change a server, and `plugins.perm.*` locale keys. Keep `apiVersion` at 1 for additive changes; bump it (and `API_VERSION`) only for breaking ones. To test in a browser, serve `examples/plugins` with a small HTTP server that mimics `Plugins::serve` (runtime injection, `__host.html`, the CSP) and make the mocked `__TAURI_INTERNALS__.convertFileSrc(p, "tdplugin")` point at it; the mock must skip subframes (`window !== window.top`), or plugin frames would see a fake Tauri.
 
 **Run something in a terminal:** go through `paneRegistry` (`send` / `runSteps`), don't reach into xterm from other components.
 
@@ -102,6 +109,8 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 - **Drag & drop is custom** (`dnd.ts`): drop zones are `data-dropzone` / `data-accept` elements, folder rows carry `data-dropdir`. Tauri's native file-drop is enabled for OS → app; HTML5 DnD is unreliable alongside it.
 - **Terminal panes stay mounted** when their tab is hidden (`visible` prop); don't unmount `SessionView` to hide it.
 - **`SessionView`s are portaled, not rendered by `TabView`.** `App.tsx` renders every pane through `createPortal` into a persistent container (`paneHost(paneId)`); `TabView` only moves that container into its pane slot. This is what lets a pane move to another tab (drag a tab onto a terminal) without remounting and dropping its connection. Pane handlers resolve their tab at call time for the same reason.
+- **Plugin security model — don't weaken it.** Plugin pages are `<iframe sandbox="allow-scripts allow-forms">` (never add `allow-same-origin`, `allow-popups`, `allow-top-navigation`, `allow-modals`) loaded from `tdplugin://`, whose responses carry `PLUGIN_CSP` (`connect-src 'none'`: no network). Tauri injects its IPC scripts (and the invoke key) into the main frame only, so plugin frames can't call commands; the app CSP only adds `frame-src` for the scheme. The host identifies a plugin by the message's **source frame**, never by message content, and checks `NEEDS` before acting. Plugins get `paneId`s, never backend session ids, secrets or key paths. Only enabled plugins are served.
+- **`useUi()` returns a new object on every render.** Long-lived callbacks (like the plugin host's `reload`) must read it through a ref; depending on it re-ran effects on every toast/menu and remounted all plugin frames.
 - **Telemetry commands run on a separate exec channel**, never in the user's shell, and must not print into the terminal. Remote scripts must survive csh/fish login shells (`sh -c '…'`, no `'`/`!`/backslashes).
 - **Persisted UI state** uses `localStorage` keys prefixed `td.` (`td.sidebar`, `td.split`, `td.showFiles`, …). User preferences (terminal font, downloads folder, …) belong in `settings.json` via `useSettings()` instead: add the field to `settings.rs` (default + `sanitize`), `Settings` in `api.ts`, `DEFAULT_SETTINGS` and `SettingsDialog.tsx`.
 - **CSP** (`tauri.conf.json`) allows only `ipc:` connections and `'self'` assets — no network fetches, no CDN fonts/scripts from the app.
@@ -110,7 +119,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 
 ## Data locations (runtime)
 
-`servers.json`, `folders.json`, `scripts.json`, `settings.json`, `known_hosts` in the app config dir: `~/.config/dev.termdock.app/` (Linux), `%APPDATA%\dev.termdock.app\` (Windows). The app also reads (never writes) the user's `~/.ssh/known_hosts` and `~/.ssh/config`.
+`servers.json`, `folders.json`, `scripts.json`, `settings.json`, `plugins.json`, `known_hosts`, `plugins/<id>/`, `plugin-data/<id>.json` in the app config dir: `~/.config/dev.termdock.app/` (Linux), `%APPDATA%\dev.termdock.app\` (Windows). The app also reads (never writes) the user's `~/.ssh/known_hosts` and `~/.ssh/config`.
 
 ## Git & releases
 
