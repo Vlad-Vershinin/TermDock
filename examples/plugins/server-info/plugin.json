@@ -1,0 +1,18 @@
+{
+  "id": "server-info",
+  "name": { "ru": "Сведения о сервере", "en": "Server info" },
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "author": "TermDock",
+  "description": {
+    "ru": "Панель под терминалом: система, время работы, диски и самые активные процессы.",
+    "en": "A panel under the terminal: system, uptime, disks and the busiest processes."
+  },
+  "main": "main.js",
+  "permissions": ["server.exec", "files.read"],
+  "contributes": {
+    "commands": [{ "id": "show", "title": { "ru": "Сведения о сервере", "en": "Server info" } }],
+    "menus": { "tab": [{ "command": "show" }] },
+    "panels": [{ "id": "info", "title": { "ru": "Сведения о сервере", "en": "Server info" }, "location": "session", "entry": "panel.html" }]
+  }
+}

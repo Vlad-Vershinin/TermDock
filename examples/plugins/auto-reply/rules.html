@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      .rule { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+      .rule input[type="text"] { width: 100%; }
+      .rule .wide { grid-column: 2 / 4; }
+      label { display: flex; align-items: center; gap: 6px; }
+      .bar { display: flex; gap: 8px; margin-top: 10px; }
+      .small { font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <label><input type="checkbox" id="enabled" /> <span id="enabledLabel"></span></label>
+    <p class="muted small" id="intro"></p>
+    <div id="list"></div>
+    <div class="bar"><button id="add"></button><button class="primary" id="save"></button></div>
+    <script src="rules.js"></script>
+    <script src="panel.js"></script>
+  </body>
+</html>

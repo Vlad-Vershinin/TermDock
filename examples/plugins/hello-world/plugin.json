@@ -1,0 +1,31 @@
+{
+  "id": "hello-world",
+  "name": { "ru": "Привет, мир", "en": "Hello world" },
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "author": "TermDock",
+  "description": {
+    "ru": "Пример: команды в меню, палитре и по горячей клавише, данные плагина, окно-диалог.",
+    "en": "Example: commands in menus, the palette and on a hotkey, plugin data, a dialog panel."
+  },
+  "main": "main.js",
+  "permissions": [],
+  "contributes": {
+    "commands": [
+      { "id": "greet", "title": { "ru": "Поздороваться", "en": "Say hello" } },
+      { "id": "server", "title": { "ru": "Что за сервер?", "en": "Which server is this?" } },
+      { "id": "files", "title": { "ru": "Сколько файлов выбрано?", "en": "How many files are selected?" } },
+      { "id": "about", "title": { "ru": "О плагине «Привет, мир»", "en": "About Hello world" } }
+    ],
+    "menus": {
+      "tab": [{ "command": "greet" }],
+      "session": [{ "command": "greet" }],
+      "server": [{ "command": "server" }],
+      "file": [{ "command": "files" }]
+    },
+    "keybindings": [{ "command": "greet", "key": "Ctrl+Alt+H" }],
+    "panels": [
+      { "id": "about", "title": { "ru": "О плагине", "en": "About" }, "location": "dialog", "entry": "about.html", "width": 420, "height": 240 }
+    ]
+  }
+}

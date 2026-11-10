@@ -1,0 +1,21 @@
+{
+  "id": "auto-reply",
+  "name": { "ru": "Автоответы", "en": "Auto-reply" },
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "author": "TermDock",
+  "description": {
+    "ru": "Отвечает в терминал, когда в выводе появляется заданный текст (например, «[Y/n]» → «y» и Enter).",
+    "en": "Types a reply into the terminal when given text appears in the output (e.g. \"[Y/n]\" → \"y\" and Enter)."
+  },
+  "main": "main.js",
+  "permissions": ["terminal.read", "terminal.write"],
+  "contributes": {
+    "commands": [
+      { "id": "toggle", "title": { "ru": "Автоответы: включить / выключить", "en": "Auto-reply: turn on / off" } },
+      { "id": "rules", "title": { "ru": "Автоответы: правила", "en": "Auto-reply: rules" } }
+    ],
+    "menus": { "session": [{ "command": "toggle" }] },
+    "panels": [{ "id": "rules", "title": { "ru": "Автоответы", "en": "Auto-reply" }, "location": "sidebar", "entry": "rules.html" }]
+  }
+}
