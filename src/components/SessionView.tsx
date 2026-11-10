@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "../lib/open";
 import "@xterm/xterm/css/xterm.css";
@@ -16,6 +15,7 @@ import { FilePanel } from "./FilePanel";
 import { IClose, IFolder, IPlay, IRefresh, IScript, ISplitDown, ISplitRight, IStep } from "./Icons";
 import { useScriptMenu, useScripts } from "./Scripts";
 import { commandBlock } from "../lib/scripts";
+import { localCallback, urlLinkProvider } from "../lib/termlinks";
 import { Telemetry } from "./Telemetry";
 import { Ports } from "./Ports";
 
@@ -40,6 +40,8 @@ interface Props {
 
 export function SessionView({ paneId, server, visible, focused, split: inSplit, onFocus, onStatus, onSplit, onClose }: Props) {
   const ui = useUi();
+  const uiRef = useRef(ui);
+  uiRef.current = ui;
   const tr = useT();
   const { settings, update: updateSettings } = useSettings();
   // The terminal's handlers are bound once; they read the latest settings through refs.
@@ -205,6 +207,35 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
   // ---- terminal setup ----
   useEffect(() => {
     const st = settingsRef.current;
+    // Link under the mouse: shown as a tooltip, copied by a right click.
+    let hovered: string | null = null;
+    const hoverLink = (url: string | null) => {
+      hovered = url;
+      if (termEl.current) termEl.current.title = url ? trNow("session.linkHint", { url }) : "";
+    };
+    // An OAuth link whose callback waits on the server's localhost: forward that port first,
+    // otherwise the browser's redirect after login lands nowhere.
+    const openLink = async (url: string) => {
+      const cb = localCallback(url);
+      const sid = sessionRef.current;
+      if (cb && sid) {
+        const st = await api
+          .forwardStart(sid, {
+            id: `link-callback:${cb.port}`,
+            kind: "local",
+            bindHost: cb.host === "::1" ? "::1" : "127.0.0.1",
+            bindPort: cb.port,
+            destHost: cb.host,
+            destPort: cb.port,
+            enabled: true,
+          })
+          .catch((e) => ({ status: `error: ${errorText(e)}` }));
+        if (st.status === "active") uiRef.current.toast(trNow("session.callbackForwarded", { port: cb.port }));
+        else uiRef.current.toast(trNow("session.callbackFailed", { port: cb.port, error: st.status.replace(/^error: /, "") }), "error");
+      }
+      openUrl(url);
+    };
+
     const t = new Terminal({
       fontFamily: terminalFont(st.termFontFamily),
       fontSize: st.termFontSize,
@@ -213,6 +244,8 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       cursorBlink: st.termCursorBlink,
       allowProposedApi: true,
       scrollback: st.termScrollback,
+      // OSC 8 hyperlinks: xterm's default opens them with window.open, which does nothing in Tauri.
+      linkHandler: { activate: (_e, uri) => openLink(uri), hover: (_e, uri) => hoverLink(uri), leave: () => hoverLink(null) },
       theme: {
         background: "#1e1f22",
         foreground: "#d6deeb",
@@ -238,7 +271,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     });
     const f = new FitAddon();
     t.loadAddon(f);
-    t.loadAddon(new WebLinksAddon((_e, uri) => openUrl(uri)));
+    t.registerLinkProvider(urlLinkProvider(t, { open: openLink, hover: hoverLink }));
     t.open(termEl.current!);
     term.current = t;
     fit.current = f;
@@ -330,6 +363,11 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     // Right click (by default): copy selection if any, otherwise paste (like PuTTY / Windows Terminal).
     const onContext = (e: MouseEvent) => {
       e.preventDefault();
+      if (hovered) {
+        writeText(hovered);
+        uiRef.current.toast(trNow("session.linkCopied"));
+        return;
+      }
       const mode = settingsRef.current.termRightClick;
       if (mode === "none") return;
       const sel = mode === "copyPaste" ? t.getSelection() : "";
