@@ -334,7 +334,13 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
         case "files.list":
           return api.remoteList(session(), str(params, "path"));
         case "files.readText":
-          return (await api.remoteReadText(session(), str(params, "path"))).text;
+          try {
+            return (await api.remoteReadText(session(), str(params, "path"))).text;
+          } catch (e) {
+            // The editor's protocol code; plugins get a plain message.
+            if (/^TOO_BIG\|/.test(errorText(e))) throw new Error("the file is larger than 5 MB");
+            throw e;
+          }
         case "files.writeText":
           await api.remoteWriteText(session(), str(params, "path"), str(params, "content"), { encoding: "UTF-8", bom: false });
           return null;
