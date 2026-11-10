@@ -170,6 +170,17 @@ Forwards are started on every connection. The **“Ports”** button above the t
 - Passwords are stored in the system storage: **Credential Manager** Windows, **GNOME Keyring** or **KWallet** in Linux. They do not go into the settings files.
 - TermDock takes your `~/.ssh/known_hosts` into account if you have one.
 
+### 🧩 Plugins
+
+Plugins add their own commands, panels and automation: for example, automatic answers to terminal prompts or a panel with server info.
+
+- **The puzzle button** in the title bar → “Manage plugins…” → “Install from folder…” or “Install from .zip…”. Plugins are enabled, disabled and removed there too.
+- Before installing, TermDock shows **what the plugin is allowed to do**: read terminal output, type commands, run commands on the server, read or change files. Uncheck what you don't want.
+- Plugin commands are in the **palette** `Ctrl+Shift+P`, in right-click menus and under the “Plugins” button above the terminal.
+- Plugins run in an isolated sandbox: they can't see passwords or keys and can't go online. But a plugin allowed to run commands can do anything on a server that you can, so install plugins only from sources you trust.
+
+Ready examples are in [`examples/plugins`](examples/plugins); to write your own, see the [plugin author docs](docs/plugins/README.en.md).
+
 ---
 
 ## ⚙️ Settings and language
@@ -195,6 +206,7 @@ The most useful: `Ctrl+Shift+K` - find a server, `Ctrl+Shift+N` - new server, `A
 | `Ctrl+Shift+K` | Search for a server (`Enter` - connect to the first one) |
 | `Ctrl+Shift+N` | New server |
 | `Ctrl+,` | Settings |
+| `Ctrl+Shift+P` | Plugin command palette |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Ctrl+Alt+1…9` | Go to tab by number |
 | `Ctrl+Shift+W` | Close the panel (the last one - together with the tab) |
@@ -326,6 +338,7 @@ src/                    React + TypeScript
     transfers.tsx transfer queue
     dragout.ts dragging files from application to OS
     termlinks.ts terminal links, including ones split over several lines
+    plugins/ plugin host (sandbox, permissions) and plugin.json parsing
     codemirror.ts languages, theme and editor encodings
 src-tauri/src/          Rust
   ssh.rs connection, authentication (password, key, agent), known_hosts, shell, exec
@@ -337,9 +350,12 @@ src-tauri/src/          Rust
   dragout.rs temporary folders for dragging into OS
   scripts.rs saved scripts
   store.rs saved servers and passwords
+  plugins.rs plugin installation, the tdplugin:// scheme, plugin data
   lib.rs Tauri commands
 packaging/arch/ PKGBUILD for Arch Linux
 docs/media/ gifs for README
+docs/plugins/ docs for plugin authors
+examples/plugins/ example plugins
 ```
 </details>
 
