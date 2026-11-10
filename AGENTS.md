@@ -78,6 +78,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `lib/dragout.ts` | Drag files out of the window into the OS file manager (tauri-plugin-drag) |
 | `lib/settings.tsx` | `useSettings()`: `settings` + `update(patch)` (live, debounced save to `settings.json`); `DEFAULT_SETTINGS` mirrors Rust |
 | `lib/transfers.tsx` | Transfer queue + `transfer-progress` event listener; Transfers panel ("Показать в папке" / "Открыть" for local files) |
+| `lib/termlinks.ts` | Terminal link provider (joins URLs split by soft or hard line breaks), OAuth `redirect_uri=localhost:PORT` detection for auto port-forward |
 | `lib/sessions.ts` | `paneRegistry` (terminals for scripts) and `remotePaneRegistry` (SFTP panes for server→server copy) |
 | `lib/scripts.ts` | `{{var:default}}` substitution, whole-vs-step run input (`commandBlock`) |
 | `styles.css` | All styling; JetBrains-like dark theme via CSS variables on `:root` |
@@ -100,6 +101,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 - **No `React.StrictMode`** (`main.tsx`): its double mount would open every SSH session twice.
 - **Drag & drop is custom** (`dnd.ts`): drop zones are `data-dropzone` / `data-accept` elements, folder rows carry `data-dropdir`. Tauri's native file-drop is enabled for OS → app; HTML5 DnD is unreliable alongside it.
 - **Terminal panes stay mounted** when their tab is hidden (`visible` prop); don't unmount `SessionView` to hide it.
+- **`SessionView`s are portaled, not rendered by `TabView`.** `App.tsx` renders every pane through `createPortal` into a persistent container (`paneHost(paneId)`); `TabView` only moves that container into its pane slot. This is what lets a pane move to another tab (drag a tab onto a terminal) without remounting and dropping its connection. Pane handlers resolve their tab at call time for the same reason.
 - **Telemetry commands run on a separate exec channel**, never in the user's shell, and must not print into the terminal. Remote scripts must survive csh/fish login shells (`sh -c '…'`, no `'`/`!`/backslashes).
 - **Persisted UI state** uses `localStorage` keys prefixed `td.` (`td.sidebar`, `td.split`, `td.showFiles`, …). User preferences (terminal font, downloads folder, …) belong in `settings.json` via `useSettings()` instead: add the field to `settings.rs` (default + `sanitize`), `Settings` in `api.ts`, `DEFAULT_SETTINGS` and `SettingsDialog.tsx`.
 - **CSP** (`tauri.conf.json`) allows only `ipc:` connections and `'self'` assets — no network fetches, no CDN fonts/scripts from the app.
