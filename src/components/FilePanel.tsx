@@ -9,6 +9,7 @@ import { dragOutLocal, dragOutRemote } from "../lib/dragout";
 import { baseName, formatDate, formatMode, formatSize, joinPath, parentPath } from "../lib/paths";
 import { useTransfers } from "../lib/transfers";
 import { MenuItem, useUi } from "../lib/ui";
+import { usePlugins } from "../lib/plugins/host";
 import { Editor } from "./Editor";
 import { t as trNow, useT } from "../lib/i18n";
 import { IArchive, ICopy, ICopyServer, IDownload, IEdit, IEye, IFile, IFileCode, IFilePlus, IFolder, IFolderDown, IFolderPlus, IImage, IMonitor, IRefresh, IServer, ITerminal, ITrash, IUp, IUpload } from "./Icons";
@@ -354,6 +355,7 @@ interface PaneProps {
 
 function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onOpenFile, transfer, onCd, extraMenu, onDragOut }: PaneProps) {
   const ui = useUi();
+  const plugins = usePlugins();
   const tr = useT();
   const [editing, setEditing] = useState<string | null>(null);
   const zoneRef = useRef<HTMLDivElement>(null);
@@ -457,6 +459,7 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
     }
     const paths = pane.entries.filter((x) => sel.has(x.path)).map((x) => x.path);
     const single = paths.length === 1;
+    const fromPlugins = plugins.menuItems("file", { paneId: tabId, side: pane.side, paths, dir: pane.dir });
     ui.menu(ev, [
       single && entry.isDir
         ? { label: tr("common.open"), icon: <IFolder size={13} />, hint: "Enter", onClick: () => pane.load(entry.path) }
@@ -464,6 +467,7 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
       ...(single && entry.isDir && onCd ? [{ label: tr("files.cdInTerminal"), icon: <ITerminal size={13} />, onClick: () => onCd(entry.path) }] : []),
       ...(transfer ?? []).map((t) => ({ label: t.label, hint: t.hint, icon: t.icon, onClick: () => t.run(paths) })),
       ...(extraMenu ? ["-" as const, ...extraMenu(paths)] : []),
+      ...(fromPlugins.length ? ["-" as const, ...fromPlugins] : []),
       "-",
       { label: tr("sidebar.renameMenu"), icon: <IEdit size={13} />, hint: "F2", disabled: !single, onClick: rename },
       { label: single ? tr("files.copyPath") : tr("files.copyPaths"), icon: <ICopy size={13} />, onClick: () => copyPaths(paths) },

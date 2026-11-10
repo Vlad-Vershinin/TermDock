@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { Manifest, PluginInfo } from "./plugins/types";
 
 export type AuthMethod = "password" | "key" | "agent";
 
@@ -155,6 +156,12 @@ export interface Settings {
   localStartDir: "last" | "downloads";
 }
 
+export interface PluginExecOutput {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
 export const api = {
   listServers: () => invoke<Server[]>("list_servers"),
   /** secret: undefined = keep, "" = forget, string = save */
@@ -251,6 +258,19 @@ export const api = {
   copyBetween: (srcSessionId: string, transferId: string, remotePaths: string[], dstSessionId: string, dstDir: string) =>
     invoke<void>("copy_between", { srcSessionId, transferId, remotePaths, dstSessionId, dstDir }),
   cancelTransfer: (transferId: string) => invoke<void>("cancel_transfer", { transferId }),
+
+  // ---- plugins ----
+  pluginList: () => invoke<PluginInfo[]>("plugin_list"),
+  pluginsDir: () => invoke<string>("plugins_dir"),
+  /** Reads plugin.json of a folder or .zip without installing it. */
+  pluginInspect: (path: string) => invoke<Manifest>("plugin_inspect", { path }),
+  pluginInstall: (path: string, granted: string[]) => invoke<PluginInfo>("plugin_install", { path, granted }),
+  /** granted: undefined keeps the current grants. */
+  pluginSetEnabled: (id: string, enabled: boolean, granted?: string[]) => invoke<PluginInfo>("plugin_set_enabled", { id, enabled, granted }),
+  pluginUninstall: (id: string) => invoke<void>("plugin_uninstall", { id }),
+  pluginStorageGet: (id: string) => invoke<Record<string, unknown>>("plugin_storage_get", { id }),
+  pluginStorageSet: (id: string, value: Record<string, unknown>) => invoke<void>("plugin_storage_set", { id, value }),
+  pluginExec: (sessionId: string, command: string, timeoutSecs?: number) => invoke<PluginExecOutput>("plugin_exec", { sessionId, command, timeoutSecs }),
 };
 
 /** Text encoding as the backend names it ("UTF-8", "UTF-16LE", "windows-1251", ...), plus the BOM flag. */

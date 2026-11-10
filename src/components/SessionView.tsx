@@ -6,18 +6,20 @@ import { openUrl } from "../lib/open";
 import "@xterm/xterm/css/xterm.css";
 import { api, configJumpText, errorText, Server } from "../lib/api";
 import { DropDetail } from "../lib/dnd";
-import { paneRegistry } from "../lib/sessions";
+import { paneEvents, paneRegistry } from "../lib/sessions";
 import { clampFontSize, DEFAULT_SETTINGS, terminalFont, useSettings } from "../lib/settings";
 import { useTransfers } from "../lib/transfers";
-import { useUi } from "../lib/ui";
+import { MenuItem, useUi } from "../lib/ui";
 import { t as trNow, useT } from "../lib/i18n";
 import { FilePanel } from "./FilePanel";
-import { IClose, IFolder, IPlay, IRefresh, IScript, ISplitDown, ISplitRight, IStep } from "./Icons";
+import { IClose, IFolder, IPlay, IPlugin, IRefresh, IScript, ISplitDown, ISplitRight, IStep } from "./Icons";
 import { useScriptMenu, useScripts } from "./Scripts";
 import { commandBlock } from "../lib/scripts";
 import { localCallback, urlLinkProvider } from "../lib/termlinks";
 import { Telemetry } from "./Telemetry";
 import { Ports } from "./Ports";
+import { PluginPanelFrame, usePlugins } from "../lib/plugins/host";
+import { ltext } from "../lib/plugins/types";
 
 const MOUSE_OFF = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l";
 
@@ -40,6 +42,8 @@ interface Props {
 
 export function SessionView({ paneId, server, visible, focused, split: inSplit, onFocus, onStatus, onSplit, onClose }: Props) {
   const ui = useUi();
+  const plugins = usePlugins();
+  const pluginPanel = plugins.sessionPanel(paneId);
   const uiRef = useRef(ui);
   uiRef.current = ui;
   const tr = useT();
@@ -79,8 +83,9 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     (s: SessionStatus) => {
       setStatus(s);
       onStatus(s);
+      paneEvents.emit({ type: "status", paneId, status: s });
     },
-    [onStatus],
+    [onStatus, paneId],
   );
 
   // ---- connection ----
@@ -119,6 +124,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
             if (e.type === "data") {
               lastOutput.current = Date.now();
               t.write(e.data);
+              paneEvents.emit({ type: "output", paneId, data: e.data });
             }
             else {
               if (id) api.disconnect(id).catch(() => {});
@@ -424,7 +430,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       // Don't steal focus from the file panel / bar of this pane when it was clicked.
       if (focused && !rootRef.current?.contains(document.activeElement)) term.current?.focus();
     });
-  }, [visible, focused, showFiles, split]);
+  }, [visible, focused, showFiles, split, pluginPanel]);
 
   // ---- scripts ----
   const sendText = useCallback((text: string) => {
@@ -461,6 +467,12 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
   useEffect(() => {
     paneRegistry.set(paneId, {
       serverId: server.id,
+      serverName: server.name,
+      host: server.host,
+      port: server.port,
+      username: server.username,
+      sessionId: () => sessionRef.current,
+      status: () => statusRef.current,
       send: sendText,
       runSteps: (name, list) => {
         if (!sessionRef.current || list.length === 0) return false;
@@ -471,7 +483,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       focus: () => term.current?.focus(),
     });
     return () => paneRegistry.delete(paneId);
-  }, [paneId, server.id, sendText]);
+  }, [paneId, server.id, server.name, server.host, server.port, server.username, sendText]);
 
   // The server's connect script: runs once the login banner / prompt has settled.
   const onConnectedRef = useRef(() => {});
@@ -528,9 +540,32 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
   };
 
   const toggleFiles = () => {
+    // With a plugin panel in the bottom area, "Files" switches back to the files.
+    if (pluginPanel) {
+      plugins.setSessionPanel(paneId, null);
+      if (showFiles) return;
+    }
     localStorage.setItem("td.showFiles", showFiles ? "0" : "1");
     setShowFiles(!showFiles);
   };
+
+  const sessionPanels = plugins.contributions.panels.filter((p) => p.location === "session");
+  const hasPluginItems = sessionPanels.length > 0 || plugins.contributions.menus.session.length > 0;
+  const pluginMenu = (e: React.MouseEvent<HTMLElement>) => {
+    const items: MenuItem[] = plugins.menuItems("session", { paneId });
+    if (items.length && sessionPanels.length) items.push("-");
+    for (const p of sessionPanels) {
+      const open = pluginPanel?.pluginId === p.pluginId && pluginPanel.id === p.id;
+      items.push({
+        label: `${open ? "✓ " : ""}${ltext(p.title, settings.language)}`,
+        icon: <IPlugin size={13} />,
+        hint: plugins.pluginName(p.pluginId),
+        onClick: () => plugins.setSessionPanel(paneId, open ? null : p),
+      });
+    }
+    ui.menu(e.currentTarget, items);
+  };
+  const showBottom = showFiles || !!pluginPanel;
 
   const onRemoteDir = useCallback((d: string | null) => {
     remoteDir.current = d;
@@ -570,7 +605,12 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         <button className="btn btn-sm" disabled={status !== "connected"} onClick={(e) => ui.menu(e.currentTarget, scriptMenu(paneId))} title={tr("session.runScript")}>
           <IScript /> <span className="btn-label">{tr("app.scripts")}</span>
         </button>
-        <button className={`btn btn-sm ${showFiles ? "on" : ""}`} onClick={toggleFiles} title={tr("session.toggleFiles")}>
+        {hasPluginItems && (
+          <button className={`btn btn-sm ${pluginPanel ? "on" : ""}`} onClick={pluginMenu} title={tr("plugins.sessionMenu")}>
+            <IPlugin /> <span className="btn-label">{tr("plugins.sessionMenu")}</span>
+          </button>
+        )}
+        <button className={`btn btn-sm ${showFiles && !pluginPanel ? "on" : ""}`} onClick={toggleFiles} title={tr("session.toggleFiles")}>
           <IFolder /> <span className="btn-label">{tr("settings.files")}</span>
         </button>
         <span className="bar-sep" />
@@ -607,17 +647,32 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         </div>
       )}
       <div className="session-body" ref={body}>
-        <div className="term-zone" ref={termZone} data-dropzone={`${paneId}:term`} data-accept="os,local" style={{ flex: showFiles ? `0 0 ${split * 100}%` : "1 1 auto" }}>
+        <div className="term-zone" ref={termZone} data-dropzone={`${paneId}:term`} data-accept="os,local" style={{ flex: showBottom ? `0 0 ${split * 100}%` : "1 1 auto" }}>
           <div className="term" ref={termEl} />
           <div className="drop-overlay">{tr("session.dropUpload")}</div>
         </div>
+        {showBottom && <div className="splitter" onPointerDown={startResize} />}
         {showFiles && (
-          <>
-            <div className="splitter" onPointerDown={startResize} />
-            <div className="files-zone">
-              <FilePanel tabId={paneId} server={server} sessionId={sessionId} onRemoteDir={onRemoteDir} onCd={cdTo} />
+          // Hidden, not unmounted, under a plugin panel: keeps folders and selection.
+          <div className="files-zone" style={pluginPanel ? { display: "none" } : undefined}>
+            <FilePanel tabId={paneId} server={server} sessionId={sessionId} onRemoteDir={onRemoteDir} onCd={cdTo} />
+          </div>
+        )}
+        {pluginPanel && (
+          <div className="plugin-zone">
+            <div className="plugin-zone-head">
+              <IPlugin size={13} />
+              <span>{ltext(pluginPanel.title, settings.language)}</span>
+              {plugins.pluginName(pluginPanel.pluginId) !== ltext(pluginPanel.title, settings.language) && (
+                <span className="muted">{plugins.pluginName(pluginPanel.pluginId)}</span>
+              )}
+              <div className="spacer" />
+              <button className="icon-btn" onClick={() => plugins.setSessionPanel(paneId, null)} title={tr("plugins.closePanel")}>
+                <IClose size={13} />
+              </button>
             </div>
-          </>
+            <PluginPanelFrame panel={pluginPanel} paneId={paneId} />
+          </div>
         )}
       </div>
     </div>

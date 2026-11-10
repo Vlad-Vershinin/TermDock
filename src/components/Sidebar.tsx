@@ -6,6 +6,7 @@ import { MenuItem, useUi } from "../lib/ui";
 import { ICopy, IEdit, IFolder, IFolderOut, IFolderPlus, IPlay, IPlus, ISplitDown, ISplitRight, ITrash } from "./Icons";
 import { SessionStatus } from "./SessionView";
 import { Key, useT } from "../lib/i18n";
+import { usePlugins } from "../lib/plugins/host";
 
 /** Aggregated connection state of all panes opened for a server. */
 export interface ServerState {
@@ -71,6 +72,7 @@ export const MAX_SIDEBAR = 560;
 
 export function Sidebar(props: Props) {
   const { servers, folders, states, width, onConnect, onSplitOpen, onAdd, onEdit, onDelete, onAddFolder, onRenameFolder, onDeleteFolder, onMove, onResize } = props;
+  const plugins = usePlugins();
   const ui = useUi();
   const tr = useT();
   const [query, setQuery] = useState("");
@@ -135,6 +137,7 @@ export function Sidebar(props: Props) {
     e.preventDefault();
     e.stopPropagation();
     const current = folderOf(s);
+    const fromPlugins = plugins.menuItems("server", { serverId: s.id });
     const targets: MenuItem[] = folders
       .filter((f) => f !== current)
       .map((f) => ({ label: f, icon: <IFolder size={13} />, onClick: () => onMove([s.id], f) }));
@@ -156,6 +159,7 @@ export function Sidebar(props: Props) {
           { label: tr("sidebar.newFolderMenu"), icon: <IFolderPlus size={13} />, onClick: () => moveToNewFolder(s) },
         ],
       },
+      ...(fromPlugins.length ? ["-" as const, ...fromPlugins] : []),
       "-",
       { label: tr("common.delete"), icon: <ITrash size={13} />, danger: true, onClick: () => onDelete(s) },
     ]);

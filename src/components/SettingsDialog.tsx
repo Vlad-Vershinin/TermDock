@@ -45,7 +45,7 @@ function NumberInput({ value, min, max, step, onChange }: { value: number; min: 
   );
 }
 
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
+export function SettingsDialog({ onClose, onPlugins }: { onClose: () => void; onPlugins: () => void }) {
   const ui = useUi();
   const tr = useT();
   const { settings: s, update } = useSettings();
@@ -217,6 +217,15 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <input type="checkbox" checked={s.showHidden} onChange={(e) => set("showHidden", e.target.checked)} />
           {tr("settings.showHidden")}
         </label>
+
+        <h4 className="settings-section">{tr("plugins.title")}</h4>
+        <div className="row">
+          <span className="hint">{tr("plugins.settingsHint")}</span>
+          <div className="spacer" />
+          <button type="button" className="btn" onClick={onPlugins}>
+            {tr("plugins.manage")}
+          </button>
+        </div>
 
         <div className="modal-actions">
           <button type="button" className="btn" onClick={resetAll}>

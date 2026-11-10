@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, errorText, Server } from "./lib/api";
-import { SettingsProvider } from "./lib/settings";
+import { SettingsProvider, useSettings } from "./lib/settings";
 import { useT } from "./lib/i18n";
 import { clearHover, dropAt, hoverAt } from "./lib/dnd";
 import { isDraggingOut, isOwnDragPath } from "./lib/dragout";
@@ -16,7 +16,11 @@ import { groupServers, MAX_SIDEBAR, MIN_SIDEBAR, ServerState, Sidebar } from "./
 import { ScriptsPanel, ScriptsProvider, useScripts } from "./components/Scripts";
 import { PaneHandlers, PaneState, SplitDir, Tab, TabView } from "./components/TabView";
 import { DropSide, TitleBar, TitleTab, WindowEdges } from "./components/TitleBar";
-import { IClose, ICopy, IEdit, IHome, IKey, ILock, IPlay, IPlus, IScript, ISettings, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
+import { CommandPalette, PluginSidebar, PluginsDialog } from "./components/Plugins";
+import { PluginsProvider, usePlugins } from "./lib/plugins/host";
+import { ltext } from "./lib/plugins/types";
+import { focusedPane as focusedPaneStore } from "./lib/sessions";
+import { IClose, ICopy, IEdit, IHome, IKey, ILock, IPlay, IPlugin, IPlus, IScript, ISettings, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
 
 const MAX_PANES = 4;
 
@@ -26,7 +30,9 @@ export default function App() {
       <SettingsProvider>
         <TransfersProvider>
           <ScriptsProvider>
-            <Main />
+            <PluginsProvider>
+              <Main />
+            </PluginsProvider>
           </ScriptsProvider>
         </TransfersProvider>
       </SettingsProvider>
@@ -61,6 +67,10 @@ function Main() {
   const [sidebarWidth, setSidebarWidth] = useState(() => Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, readNumber("td.sidebarWidth", 270))));
   const [scriptsOpen, setScriptsOpen] = useState(() => localStorage.getItem("td.scriptsPanel") === "1");
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const plugins = usePlugins();
+  const { settings } = useSettings();
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -295,6 +305,8 @@ function Main() {
   const activeTab = tabs.find((t) => t.id === active) ?? null;
   const focusedPane = activeTab?.panes.find((p) => p.id === activeTab.focus) ?? null;
   const focusedServer = servers.find((s) => s.id === focusedPane?.serverId) ?? null;
+  // Plugins act on "the current session": the focused pane of the visible tab.
+  useEffect(() => focusedPaneStore.set(focusedPane?.id ?? null), [focusedPane?.id]);
 
   // ---------- servers ----------
 
@@ -350,6 +362,7 @@ function Main() {
 
   // ---------- global shortcuts ----------
 
+  const handlePluginKey = plugins.handleKey;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (document.querySelector(".modal-backdrop")) return;
@@ -365,6 +378,7 @@ function Main() {
         setEditing(null);
       }
       else if (mod && !e.shiftKey && !e.altKey && e.code === "Comma") setSettingsOpen(true);
+      else if (mod && e.shiftKey && !e.altKey && e.code === "KeyP") setPaletteOpen(true);
       else if (mod && e.shiftKey && e.code === "KeyW" && tab) closePane(tab.id, tab.focus);
       else if (mod && e.shiftKey && e.code === "KeyD" && tab) duplicateTab(tab.id);
       else if (mod && e.key === "Tab" && list.length) {
@@ -383,7 +397,7 @@ function Main() {
         focusPane(tab.id, tab.panes[n].id);
       } else if (e.altKey && !e.shiftKey && !mod && e.code === "Digit1") toggleSidebar();
       else if (e.altKey && !e.shiftKey && !mod && e.code === "Digit2") toggleScripts();
-      else handled = false;
+      else handled = handlePluginKey(e);
       if (handled) {
         // Keep the shortcut away from the terminal.
         e.preventDefault();
@@ -392,7 +406,7 @@ function Main() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [closePane, duplicateTab, splitTab, focusPane, toggleSidebar, toggleScripts]);
+  }, [closePane, duplicateTab, splitTab, focusPane, toggleSidebar, toggleScripts, handlePluginKey]);
 
   // ---------- derived ----------
 
@@ -495,8 +509,12 @@ function Main() {
 
   const tabMenu = (e: React.MouseEvent, id: string) => {
     setActive(id);
-    const custom = !!tabs.find((t) => t.id === id)?.title;
+    const tab = tabs.find((t) => t.id === id);
+    const custom = !!tab?.title;
+    const fromPlugins = tab ? plugins.menuItems("tab", { paneId: tab.focus, paneIds: tab.panes.map((p) => p.id) }) : [];
     ui.menu(e, [
+      ...fromPlugins,
+      ...(fromPlugins.length ? ["-" as const] : []),
       { label: tr("app.renameTab"), icon: <IEdit size={13} />, hint: tr("app.renameTabHint"), onClick: () => setRenaming(id) },
       ...(custom ? [{ label: tr("app.resetTabName"), onClick: () => updateTab(id, (t) => ({ ...t, title: undefined })) }] : []),
       "-",
@@ -507,6 +525,20 @@ function Main() {
       { label: tr("titlebar.closeTab"), icon: <IClose size={13} />, onClick: () => closeTab(id) },
       { label: tr("app.closeOtherTabs"), disabled: tabs.length < 2, onClick: () => closeOtherTabs(id) },
     ]);
+  };
+
+  const pluginsMenu = (e: React.MouseEvent<HTMLElement>) => {
+    const sidebarPanels = plugins.contributions.panels.filter((p) => p.location === "sidebar" || p.location === "dialog");
+    const items: MenuItem[] = sidebarPanels.map((p) => ({
+      label: ltext(p.title, settings.language),
+      icon: <IPlugin size={13} />,
+      hint: plugins.pluginName(p.pluginId),
+      onClick: () => plugins.openPanel(p),
+    }));
+    if (items.length) items.push("-");
+    items.push({ label: tr("plugins.palette"), hint: "Ctrl+Shift+P", onClick: () => setPaletteOpen(true) });
+    items.push({ label: tr("plugins.manage"), onClick: () => setPluginsOpen(true) });
+    ui.menu(e.currentTarget, items);
   };
 
   const newTabMenu = (e: React.MouseEvent<HTMLElement>) => {
@@ -555,6 +587,9 @@ function Main() {
             </button>
             <button className={`tb-btn ${showTransfers ? "on" : ""}`} onClick={() => setShowTransfers(!showTransfers)} title={tr("app.transfersHint")}>
               <ITransfer size={14} /> {tr("transfers.title")}{running ? <span className="badge">{running}</span> : null}
+            </button>
+            <button className={`icon-btn tb-tool ${plugins.sidebarPanel ? "on" : ""}`} onClick={pluginsMenu} title={tr("plugins.hint")}>
+              <IPlugin size={15} />
             </button>
             <button className={`icon-btn tb-tool ${settingsOpen ? "on" : ""}`} onClick={() => setSettingsOpen(true)} title={tr("app.settingsHint")}>
               <ISettings size={15} />
@@ -618,9 +653,20 @@ function Main() {
             onClose={toggleScripts}
           />
         )}
+        <PluginSidebar />
       </div>
       {editing !== undefined && <ServerDialog server={editing} servers={servers} folders={folders} folder={editing ? undefined : newInFolder} onClose={() => setEditing(undefined)} onSaved={onSaved} />}
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => setSettingsOpen(false)}
+          onPlugins={() => {
+            setSettingsOpen(false);
+            setPluginsOpen(true);
+          }}
+        />
+      )}
+      {pluginsOpen && <PluginsDialog onClose={() => setPluginsOpen(false)} />}
+      {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}
       <WindowEdges />
     </div>
   );
