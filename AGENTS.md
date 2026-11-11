@@ -9,7 +9,7 @@ Guide for AI coding agents working on **TermDock** — a desktop SSH client: ser
   - Rust: user-facing error strings go through `tr!("русский {x}", "english {x}", …)` (`i18n.rs`, a `format!` per language). Protocol codes (`NEED_SECRET`, `HOSTKEY_*`, `JUMP|…`, `CANCELLED`, `TOO_BIG|…`) stay untranslated.
   - Keep Russian consistent with the existing tone; English is concise, standard desktop-app wording. `grep -rnP '[А-Яа-яЁё]' src` should only hit `locales/ru.ts` (and `LANGUAGE_NAMES`).
 - **Code, comments, identifiers, commit messages: English.** Comments are short and explain *why*.
-- `README.md` (English, the GitHub landing page) and `README.ru.md` (Russian) are user-facing: written for non-technical readers, with GIFs from `docs/media/`. Keep them in sync, and use the app's real button labels from the locale files. Don't turn them into developer docs; developer notes belong here.
+- `README.md` (English, the GitHub landing page) and `README.ru.md` (Russian) are user-facing: written for non-technical readers, with GIFs from `docs/media/` (English UI) and `docs/media/ru/` (Russian UI). Keep them in sync, and use the app's real button labels from the locale files. Don't turn them into developer docs; developer notes belong here.
 
 ## Commands
 

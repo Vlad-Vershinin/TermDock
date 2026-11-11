@@ -53,6 +53,8 @@ Open the [**Releases**](https://github.com/Vlad-Vershinin/TermDock/releases/late
 
 **Updates install themselves.** TermDock checks for a new version at startup and every hour. When one is out, an "Update to …" button appears in the title bar: click it, and TermDock downloads and installs the new version, then restarts. On Linux, deb, rpm and Arch packages ask for the admin password. You can turn the check off in the settings, "Updates" section. Installing a new version over the old one by hand still works. Either way, your servers and settings are kept.
 
+<img src="docs/media/update.gif" alt="The update button in the title bar, release notes and a one-click update" width="900" />
+
 ---
 
 ## Quick start
@@ -113,7 +115,7 @@ Update the system, deploy a site, check the logs: save the commands once (**"Scr
 - **Step by step**: commands are sent one at a time with **"Next"** (`Ctrl+Shift+Enter`), handy when you want to check each result. **"All the rest"** sends the remaining commands at once.
 - **Variables**: write `{{service}}` or `{{service:nginx}}` (with a default value) in a script, and TermDock asks what to fill in before running it.
 - **Like a bash script**: the whole text runs in one `bash`, so loops, functions and `set -e` work.
-- **Run on connect**: in the server settings you can pick a script that runs every time you connect (for example, `sudo apt update`).
+- **Connect script**: in the server settings you can pick a script that runs every time you connect (for example, `sudo apt update`).
 
 Each script has a default mode; right-click a script in the panel to choose "Run all at once" or "Run step by step".
 
@@ -131,11 +133,15 @@ Open two servers in one tab, or a second connection to the same server: for exam
 - **Reorder tabs** by dragging them along the tab strip.
 - **Double-click a tab** to rename it (the server keeps its name). An empty name brings the server name back.
 
+<img src="docs/media/tabs.gif" alt="Reordering tabs, renaming a tab and dragging a tab onto a terminal to split the screen" width="900" />
+
 ### 🔗 Links in the terminal
 
 Click a link to open it in the browser, even when the program on the server split a long address over several lines. **Right-click a link** to copy it whole, as one line.
 
 If the link is a browser sign-in that has to come back to a program on the server (`redirect_uri=http://localhost:…`, as Claude Code and MCP servers do), TermDock forwards that port for you, so the sign-in completes.
+
+<img src="docs/media/links.gif" alt="A long sign-in link over several lines: hover, copy and open" width="900" />
 
 ### 📊 Server load
 
@@ -174,6 +180,8 @@ Forwards start on every connection. The **"Ports"** button above the terminal sh
 ### 🧩 Plugins
 
 Plugins add their own commands, panels and automation: for example, automatic answers to terminal prompts or a panel with server info.
+
+<img src="docs/media/plugins.gif" alt="Installing a plugin with a permission prompt, running it from the command palette, and auto-reply answering a [Y/n] question" width="900" />
 
 - **The puzzle button** in the title bar → "Manage plugins…" → "Install from folder…" or "Install from .zip…". Plugins are enabled, disabled and removed there too.
 - Before installing, TermDock shows **what the plugin is allowed to do**: read terminal output, type commands, run commands on the server, read or change files. Uncheck what you don't want.
