@@ -130,10 +130,10 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 - Don't commit `node_modules`, `dist`, `src-tauri/target`, `src-tauri/gen`, `release/` (all git-ignored).
 - **Release** (done by tagging; CI does the rest):
   1. Bump the version in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `packaging/arch/PKGBUILD` (`pkgver`).
-  2. Rewrite `.github/release-notes.md` for the new version (it becomes the GitHub release body; file names in its install table include the version).
+  2. Rewrite `.github/release-notes.md` for the new version (it becomes the GitHub release body; file names in its install tables include the version). It is bilingual: English first (`## What's new in X.Y.Z` … `## Install`), then `---` and the Russian text (`## Что нового в X.Y.Z` … `## Установка`) inside `<details><summary>🇷🇺 На русском</summary>`. The update dialog shows the section in the UI language (`notesSection` in `lib/updates.tsx`), so keep these headings.
   3. Commit `chore(release): bump version to X.Y.Z`, tag `vX.Y.Z`, push `main` and the tag.
   4. `.github/workflows/build.yml` builds Windows (NSIS, MSI), Linux (deb, rpm, AppImage) and Arch packages and publishes the release (~15 min).
-  5. Installed copies see the release within an hour (`updater.rs`); the release notes above the `## Установка` heading are shown in the update dialog.
+  5. Installed copies see the release within an hour (`updater.rs`) and show its "what's new" section in the update dialog.
 
 ## Known limitations (don't "fix" by accident)
 

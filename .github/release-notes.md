@@ -1,3 +1,36 @@
+## What's new in 1.4.0
+
+### Plugins
+- **TermDock can now be extended with plugins.** They add their own commands, panels and automation: for example, answering `[Y/n]` questions in the terminal or showing a panel with server info.
+- **Install from a folder or a .zip**: the puzzle button in the title bar → "Manage plugins…". Plugins are enabled, disabled and removed there too.
+- **You decide what a plugin may do.** Before installing, TermDock shows what the plugin asks for: read terminal output, type commands, run commands on the server, read or change files. Uncheck what you don't want.
+- **Command palette** `Ctrl+Shift+P`: find and run plugin commands quickly. Commands are also in the right-click menus of tabs, servers and files, and under the "Plugins" button above the terminal.
+- **Security**: plugins run in an isolated sandbox. They can't see passwords or keys and can't go online. But a plugin allowed to run commands can do anything on a server that you can, so install plugins only from sources you trust.
+- Three example plugins are in the `examples/plugins` folder of the repository, and `docs/plugins` explains how to write your own.
+
+### Updates
+- **TermDock tells you about new versions.** It checks at startup and every hour. When a new version is out, an "Update to …" button appears in the title bar.
+- **One-click update**: TermDock downloads the new version, verifies the file's checksum, installs it and restarts. On Linux, deb, rpm and Arch packages ask for the admin password.
+- Before updating you see what changed. You can skip a version, or turn the automatic check off in the settings, "Updates" section.
+- This version has to be installed by hand; later ones install with the button.
+
+## Install
+
+| System | File |
+|---|---|
+| Windows 10/11 | `TermDock_1.4.0_x64-setup.exe` (recommended) or `TermDock_1.4.0_x64_en-US.msi` |
+| Ubuntu / Debian | `TermDock_1.4.0_amd64.deb` → `sudo apt install ./TermDock_1.4.0_amd64.deb` |
+| Fedora / openSUSE | `TermDock-1.4.0-1.x86_64.rpm` |
+| Arch Linux | `termdock-1.4.0-1-x86_64.pkg.tar.zst` → `sudo pacman -U termdock-1.4.0-1-x86_64.pkg.tar.zst` |
+| Any Linux | `TermDock_1.4.0_amd64.AppImage` → `chmod +x` and run it |
+
+Settings and servers from earlier versions are kept; install the update over the old version.
+
+---
+
+<details>
+<summary>🇷🇺 На русском</summary>
+
 ## Что нового в 1.4.0
 
 ### Плагины
@@ -25,3 +58,6 @@
 | Любой Linux | `TermDock_1.4.0_amd64.AppImage` → `chmod +x` и запустить |
 
 Настройки и серверы из прошлых версий сохраняются, обновление можно ставить поверх.
+
+
+</details>
