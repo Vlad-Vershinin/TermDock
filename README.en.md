@@ -50,7 +50,7 @@ Open the page [**Releases**](https://github.com/Vlad-Vershinin/TermDock/releases
 
 > **Windows showed “Windows has protected your computer”?** This happens with programs without a paid digital signature. Click "More details" → "Run anyway".
 
-The update is installed on top of the old version - the servers and settings will be preserved.
+**Updates come by themselves.** TermDock checks for a new version at startup and every hour. When one is out, an "Update to …" button appears in the title bar: click it, and TermDock downloads and installs the new version, then restarts. On Linux, deb, rpm and Arch packages ask for the admin password. You can turn the check off in the settings, "Updates" section. Installing the new version on top of the old one by hand still works. Either way, servers and settings are kept.
 
 ---
 
