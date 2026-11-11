@@ -58,6 +58,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `settings.rs` | Global app settings (`settings.json`, every field `#[serde(default)]`, `sanitize()` clamps), download-folder resolution, `first_run` (fresh install: the UI picks English unless the OS locale is Russian) |
 | `dragout.rs` | Temp folders / helpers for dragging files out to the OS |
 | `plugins.rs` | Plugins: `plugin.json` validation, install from folder / `.zip` (path, symlink, size checks), enabled state + granted permissions (`plugins.json`), per-plugin storage, the `tdplugin://` scheme (`serve`, strict CSP) |
+| `updater.rs` | App updates: GitHub `releases/latest`, install method detection (NSIS / MSI / AppImage / deb / rpm / pacman / manual), download with SHA-256 check against the asset `digest`, install + restart |
 | `plugin_runtime/` | `runtime.js` (`window.termdock` inside plugin frames, postMessage RPC) and `theme.css`, served at `tdplugin://…/__termdock/` |
 
 ### Frontend (`src/`)
@@ -83,6 +84,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `lib/plugins/host.tsx` | `PluginsProvider` / `usePlugins()`: hidden host frames, message routing, permission checks for every call, events to plugins, commands, menus, keybindings, panel state; `PluginFrame` (the sandboxed iframe) |
 | `lib/plugins/types.ts` | Manifest types, `PERMISSIONS` (mirror of Rust), `readContributions`, localized texts (`ltext`), key matching |
 | `components/Plugins.tsx` | Plugin manager dialog (install with permission prompt), command palette (Ctrl+Shift+P), plugin sidebar panel |
+| `lib/updates.tsx` | `UpdatesProvider` / `useUpdates()`: background check (5 s after start, then hourly, `checkUpdates` setting), title bar button, update dialog with release notes and progress, "skip this version" (`td.update.skip`) |
 | `lib/termlinks.ts` | Terminal link provider (joins URLs split by soft or hard line breaks), OAuth `redirect_uri=localhost:PORT` detection for auto port-forward |
 | `lib/sessions.ts` | `paneRegistry` (terminals for scripts and plugins), `paneEvents` (output / status / focus for the plugin host), `focusedPane`, `remotePaneRegistry` (SFTP panes for server→server copy) |
 | `lib/scripts.ts` | `{{var:default}}` substitution, whole-vs-step run input (`commandBlock`) |
@@ -111,6 +113,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 - **`SessionView`s are portaled, not rendered by `TabView`.** `App.tsx` renders every pane through `createPortal` into a persistent container (`paneHost(paneId)`); `TabView` only moves that container into its pane slot. This is what lets a pane move to another tab (drag a tab onto a terminal) without remounting and dropping its connection. Pane handlers resolve their tab at call time for the same reason.
 - **Plugin security model — don't weaken it.** Plugin pages are `<iframe sandbox="allow-scripts allow-forms">` (never add `allow-same-origin`, `allow-popups`, `allow-top-navigation`, `allow-modals`) loaded from `tdplugin://`, whose responses carry `PLUGIN_CSP` (`connect-src 'none'`: no network). Tauri injects its IPC scripts (and the invoke key) into the main frame only, so plugin frames can't call commands; the app CSP only adds `frame-src` for the scheme. The host identifies a plugin by the message's **source frame**, never by message content, and checks `NEEDS` before acting. Plugins get `paneId`s, never backend session ids, secrets or key paths. Only enabled plugins are served.
 - **`useUi()` returns a new object on every render.** Long-lived callbacks (like the plugin host's `reload`) must read it through a ref; depending on it re-ran effects on every toast/menu and remounted all plugin frames.
+- **Updates depend on release file names.** `updater.rs` picks the asset by suffix (`-setup.exe`, `.msi`, `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst`) and refuses one without GitHub's `digest`. Renaming bundles or the repo (`LATEST_URL`) breaks updates for every installed copy. Network access is backend-only (`reqwest`); the app CSP still blocks it in the webview. Debug builds always report the `manual` method, so `tauri dev` never installs over a real install.
 - **Telemetry commands run on a separate exec channel**, never in the user's shell, and must not print into the terminal. Remote scripts must survive csh/fish login shells (`sh -c '…'`, no `'`/`!`/backslashes).
 - **Persisted UI state** uses `localStorage` keys prefixed `td.` (`td.sidebar`, `td.split`, `td.showFiles`, …). User preferences (terminal font, downloads folder, …) belong in `settings.json` via `useSettings()` instead: add the field to `settings.rs` (default + `sanitize`), `Settings` in `api.ts`, `DEFAULT_SETTINGS` and `SettingsDialog.tsx`.
 - **CSP** (`tauri.conf.json`) allows only `ipc:` connections and `'self'` assets — no network fetches, no CDN fonts/scripts from the app.
@@ -130,6 +133,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
   2. Rewrite `.github/release-notes.md` for the new version (it becomes the GitHub release body; file names in its install table include the version).
   3. Commit `chore(release): bump version to X.Y.Z`, tag `vX.Y.Z`, push `main` and the tag.
   4. `.github/workflows/build.yml` builds Windows (NSIS, MSI), Linux (deb, rpm, AppImage) and Arch packages and publishes the release (~15 min).
+  5. Installed copies see the release within an hour (`updater.rs`); the release notes above the `## Установка` heading are shown in the update dialog.
 
 ## Known limitations (don't "fix" by accident)
 
