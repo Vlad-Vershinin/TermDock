@@ -154,7 +154,28 @@ export interface Settings {
   askDownloadDir: boolean;
   showHidden: boolean;
   localStartDir: "last" | "downloads";
+  /** Look for a new release on GitHub at startup and every hour. */
+  checkUpdates: boolean;
 }
+
+/** How an update is installed; "manual" = only the release page. */
+export type UpdateMethod = "nsis" | "msi" | "appimage" | "deb" | "rpm" | "pacman" | "manual";
+
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  /** The latest release is newer than this copy. */
+  available: boolean;
+  /** Release notes (Markdown). */
+  notes: string;
+  url: string;
+  publishedAt: string | null;
+  method: UpdateMethod;
+  asset: string | null;
+  size: number | null;
+}
+
+export type UpdateProgress = { phase: "download"; received: number; total: number } | { phase: "install" };
 
 export interface PluginExecOutput {
   code: number | null;
@@ -260,6 +281,14 @@ export const api = {
   cancelTransfer: (transferId: string) => invoke<void>("cancel_transfer", { transferId }),
 
   // ---- plugins ----
+  updateCheck: () => invoke<UpdateInfo>("update_check"),
+  /** Downloads, verifies and installs the latest release; the app restarts on success. */
+  updateInstall: (onProgress: (p: UpdateProgress) => void) => {
+    const ch = new Channel<UpdateProgress>();
+    ch.onmessage = onProgress;
+    return invoke<void>("update_install", { onProgress: ch });
+  },
+  updateCancel: () => invoke<void>("update_cancel"),
   pluginList: () => invoke<PluginInfo[]>("plugin_list"),
   pluginsDir: () => invoke<string>("plugins_dir"),
   /** Reads plugin.json of a folder or .zip without installing it. */

@@ -18,9 +18,10 @@ import { PaneHandlers, PaneState, SplitDir, Tab, TabView } from "./components/Ta
 import { DropSide, TitleBar, TitleTab, WindowEdges } from "./components/TitleBar";
 import { CommandPalette, PluginSidebar, PluginsDialog } from "./components/Plugins";
 import { PluginsProvider, usePlugins } from "./lib/plugins/host";
+import { UpdatesProvider, useUpdates } from "./lib/updates";
 import { ltext } from "./lib/plugins/types";
 import { focusedPane as focusedPaneStore } from "./lib/sessions";
-import { IClose, ICopy, IEdit, IHome, IKey, ILock, IPlay, IPlugin, IPlus, IScript, ISettings, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
+import { IClose, ICopy, IDownload, IEdit, IHome, IKey, ILock, IPlay, IPlugin, IPlus, IScript, ISettings, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
 
 const MAX_PANES = 4;
 
@@ -28,13 +29,15 @@ export default function App() {
   return (
     <UiProvider>
       <SettingsProvider>
-        <TransfersProvider>
-          <ScriptsProvider>
-            <PluginsProvider>
-              <Main />
-            </PluginsProvider>
-          </ScriptsProvider>
-        </TransfersProvider>
+        <UpdatesProvider>
+          <TransfersProvider>
+            <ScriptsProvider>
+              <PluginsProvider>
+                <Main />
+              </PluginsProvider>
+            </ScriptsProvider>
+          </TransfersProvider>
+        </UpdatesProvider>
       </SettingsProvider>
     </UiProvider>
   );
@@ -70,6 +73,7 @@ function Main() {
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const plugins = usePlugins();
+  const updates = useUpdates();
   const { settings } = useSettings();
 
   const tabsRef = useRef(tabs);
@@ -582,6 +586,11 @@ function Main() {
         }
         right={
           <>
+            {updates.pending ? (
+              <button className="tb-btn tb-update" onClick={updates.showDialog} title={tr("update.buttonHint")}>
+                <IDownload size={14} /> {tr("update.button", { version: updates.pending.latest })}
+              </button>
+            ) : null}
             <button className={`tb-btn ${scriptsOpen ? "on" : ""}`} onClick={toggleScripts} title={tr("app.scriptsHint")}>
               <IScript size={14} /> {tr("app.scripts")}{scripts.length ? <span className="muted">{scripts.length}</span> : null}
             </button>

@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   askDownloadDir: false,
   showHidden: false,
   localStartDir: "last",
+  checkUpdates: true,
 };
 
 export const TERM_FONT_DEFAULT = '"JetBrains Mono", "Cascadia Mono", "Fira Code", Consolas, "DejaVu Sans Mono", "Ubuntu Mono", monospace';

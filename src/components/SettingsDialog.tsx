@@ -3,6 +3,8 @@ import { api, Settings } from "../lib/api";
 import { DEFAULT_SETTINGS, pickFolder, useSettings } from "../lib/settings";
 import { useUi } from "../lib/ui";
 import { LANGUAGE_NAMES, useT } from "../lib/i18n";
+import { useUpdates } from "../lib/updates";
+import { getVersion } from "@tauri-apps/api/app";
 
 const MONO_FONTS = [
   "JetBrains Mono",
@@ -50,6 +52,9 @@ export function SettingsDialog({ onClose, onPlugins }: { onClose: () => void; on
   const tr = useT();
   const { settings: s, update } = useSettings();
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => update({ [k]: v } as Partial<Settings>);
+  const updates = useUpdates();
+  const [version, setVersion] = useState("");
+  useEffect(() => void getVersion().then(setVersion, () => {}), []);
   // What an empty download folder means on this machine.
   const [osDownloads, setOsDownloads] = useState("");
   useEffect(() => {
@@ -216,6 +221,19 @@ export function SettingsDialog({ onClose, onPlugins }: { onClose: () => void; on
         <label className="check">
           <input type="checkbox" checked={s.showHidden} onChange={(e) => set("showHidden", e.target.checked)} />
           {tr("settings.showHidden")}
+        </label>
+
+        <h4 className="settings-section">{tr("settings.updates")}</h4>
+        <div className="row">
+          <span className="muted">{version ? tr("settings.version", { version }) : null}</span>
+          <div className="spacer" />
+          <button type="button" className="btn" disabled={updates.checking} onClick={updates.checkNow}>
+            {updates.checking ? tr("settings.checking") : tr("settings.checkNow")}
+          </button>
+        </div>
+        <label className="check">
+          <input type="checkbox" checked={s.checkUpdates} onChange={(e) => set("checkUpdates", e.target.checked)} />
+          {tr("settings.checkUpdates")}
         </label>
 
         <h4 className="settings-section">{tr("plugins.title")}</h4>
