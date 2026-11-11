@@ -12,6 +12,7 @@ mod sshconfig;
 mod stats;
 mod store;
 mod textcodec;
+mod updater;
 
 use std::path::PathBuf;
 
@@ -461,6 +462,25 @@ fn open_local_path(app: AppHandle, path: String) -> Result<(), String> {
     app.opener().open_path(&path, None::<&str>).map_err(|e| tr!("Не удалось открыть {path}: {e}", "Couldn't open {path}: {e}"))
 }
 
+// ---------- updates ----------
+
+#[tauri::command]
+async fn update_check(app: AppHandle) -> Result<updater::UpdateInfo, String> {
+    updater::check(&app.package_info().version.to_string()).await
+}
+
+/// Downloads, verifies and installs the latest release, then restarts the app.
+#[tauri::command]
+async fn update_install(app: AppHandle, updater: State<'_, updater::Updater>, on_progress: tauri::ipc::Channel<updater::Progress>) -> Result<(), String> {
+    let current = app.package_info().version.to_string();
+    updater.install(&app, &current, &on_progress).await
+}
+
+#[tauri::command]
+fn update_cancel(updater: State<updater::Updater>) {
+    updater.cancel();
+}
+
 // ---------- files ----------
 
 #[tauri::command]
@@ -730,6 +750,7 @@ pub fn run() {
             app.manage(Paths { known_hosts: dir.join("known_hosts") });
             app.manage(Sessions::default());
             app.manage(Transfers::default());
+            app.manage(updater::Updater::default());
             std::thread::spawn(dragout::cleanup_old);
             Ok(())
         })
@@ -750,6 +771,9 @@ pub fn run() {
             settings_first_run,
             download_dir,
             open_local_path,
+            update_check,
+            update_install,
+            update_cancel,
             ssh_connect,
             plugin_list,
             plugins_dir,

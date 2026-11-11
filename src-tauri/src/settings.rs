@@ -36,6 +36,10 @@ pub struct Settings {
     pub show_hidden: bool,
     /// Folder the local pane opens in: "last" (last visited) | "downloads".
     pub local_start_dir: String,
+
+    // ---- updates ----
+    /// Look for a new release on GitHub at startup and every hour.
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -55,6 +59,7 @@ impl Default for Settings {
             ask_download_dir: false,
             show_hidden: false,
             local_start_dir: "last".into(),
+            check_updates: true,
         }
     }
 }

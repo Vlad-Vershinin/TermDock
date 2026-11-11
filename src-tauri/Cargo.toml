@@ -30,6 +30,8 @@ tauri-plugin-drag = "2.1.1"
 encoding_rs = "0.8"
 chardetng = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "system-proxy"] }
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
