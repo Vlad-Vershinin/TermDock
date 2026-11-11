@@ -197,18 +197,33 @@ function inline(text: string): ReactNode[] {
   );
 }
 
+// Release notes headings (Russian or English). Cyrillic is escaped to keep it in locales/ru.ts only.
+const INSTALL_RE = /^##\s+(\u0423\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430|Install)/i;
+const NEW_RE = { en: /^##\s+What's new/i, ru: /^##\s+\u0427\u0442\u043e \u043d\u043e\u0432\u043e\u0433\u043e/i };
+
+/** The "what's new" part of bilingual release notes in the UI language (English first, Russian below). */
+export function notesSection(text: string, lang: "ru" | "en"): string[] {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const start = lines.findIndex((l) => NEW_RE[lang].test(l));
+  const isEnd = (l: string) => INSTALL_RE.test(l) || NEW_RE.en.test(l) || NEW_RE.ru.test(l) || /^(---+|<\/?details>?.*)$/.test(l.trim());
+  if (start >= 0) {
+    const end = lines.findIndex((l, i) => i > start && isEnd(l));
+    return lines.slice(start, end < 0 ? undefined : end);
+  }
+  const end = lines.findIndex((l) => INSTALL_RE.test(l));
+  return end >= 0 ? lines.slice(0, end) : lines;
+}
+
 /** The release notes as simple Markdown (headings, lists, paragraphs), without the install table. */
 function ReleaseNotes({ text }: { text: string }) {
-  const lines = text.replace(/\r/g, "").split("\n");
-  // The install section heading (Russian or English); Cyrillic is escaped to keep it in locales/ru.ts only.
-  const end = lines.findIndex((l) => /^##\s+(\u0423\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430|Install)/i.test(l));
+  const { settings } = useSettings();
   const blocks: ReactNode[] = [];
   let list: ReactNode[] = [];
   const flush = () => {
     if (list.length) blocks.push(<ul key={blocks.length}>{list}</ul>);
     list = [];
   };
-  for (const raw of end >= 0 ? lines.slice(0, end) : lines) {
+  for (const raw of notesSection(text, settings.language)) {
     const l = raw.trim();
     const item = /^[-*]\s+(.*)$/.exec(l);
     if (item) {
@@ -218,7 +233,7 @@ function ReleaseNotes({ text }: { text: string }) {
     flush();
     const h = /^(#{1,6})\s+(.*)$/.exec(l);
     if (h) blocks.push(h[1].length <= 2 ? <h4 key={blocks.length}>{inline(h[2])}</h4> : <h5 key={blocks.length}>{inline(h[2])}</h5>);
-    else if (l && !l.startsWith("|")) blocks.push(<p key={blocks.length}>{inline(l)}</p>);
+    else if (l && !l.startsWith("|") && !l.startsWith("<")) blocks.push(<p key={blocks.length}>{inline(l)}</p>);
   }
   flush();
   return blocks.length ? <div className="release-notes">{blocks}</div> : null;
