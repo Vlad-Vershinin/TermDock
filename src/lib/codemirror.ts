@@ -42,7 +42,7 @@ export const languageLabel = (lang: LanguageDescription | null) =>
 // Colours follow the JetBrains "New UI" dark scheme to match the rest of the app.
 const theme = EditorView.theme(
   {
-    "&": { height: "100%", backgroundColor: "var(--bg)", color: "var(--text)", fontSize: "13px" },
+    "&": { height: "100%", backgroundColor: "var(--bg)", color: "var(--text)", fontSize: "calc(13px * var(--fs))" },
     "&.cm-focused": { outline: "none" },
     ".cm-scroller": {
       fontFamily: '"JetBrains Mono", "Cascadia Mono", "Fira Code", Consolas, "DejaVu Sans Mono", monospace',
@@ -70,8 +70,8 @@ const theme = EditorView.theme(
     ".cm-panels": { backgroundColor: "var(--bg-1)", color: "var(--text)" },
     ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--line)" },
     ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--line)" },
-    ".cm-panel.cm-search": { padding: "6px 30px 6px 10px", fontSize: "12px", fontFamily: "inherit" },
-    ".cm-panel.cm-search input, .cm-panel.cm-search button, .cm-panel.cm-search label": { margin: "2px 4px 2px 0", fontSize: "12px" },
+    ".cm-panel.cm-search": { padding: "6px 30px 6px 10px", fontSize: "calc(12px * var(--fs))", fontFamily: "inherit" },
+    ".cm-panel.cm-search input, .cm-panel.cm-search button, .cm-panel.cm-search label": { margin: "2px 4px 2px 0", fontSize: "calc(12px * var(--fs))" },
     ".cm-textfield": {
       height: "26px",
       padding: "0 8px",

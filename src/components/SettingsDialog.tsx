@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { api, Settings } from "../lib/api";
 import { DEFAULT_SETTINGS, pickFolder, useSettings } from "../lib/settings";
 import { useUi } from "../lib/ui";
-import { LANGUAGE_NAMES, useT } from "../lib/i18n";
+import { Key, LANGUAGE_NAMES, useT } from "../lib/i18n";
+import { IDownload, IFolder, IMonitor, IPlugin, ITerminal } from "./Icons";
 import { useUpdates } from "../lib/updates";
 import { getVersion } from "@tauri-apps/api/app";
 
@@ -22,6 +23,28 @@ const MONO_FONTS = [
   "Noto Sans Mono",
   "Courier New",
 ];
+
+const UI_FONT_SIZES = [11, 12, 13, 14, 15, 16];
+
+type Section = "interface" | "terminal" | "files" | "updates" | "plugins";
+const SECTIONS: { id: Section; label: Key; icon: ReactNode }[] = [
+  { id: "interface", label: "settings.interface", icon: <IMonitor size={15} /> },
+  { id: "terminal", label: "settings.terminal", icon: <ITerminal size={15} /> },
+  { id: "files", label: "settings.files", icon: <IFolder size={15} /> },
+  { id: "updates", label: "settings.updates", icon: <IDownload size={15} /> },
+  { id: "plugins", label: "plugins.title", icon: <IPlugin size={15} /> },
+];
+const SECTION_KEY = "td.settingsSection";
+
+function readSection(): Section {
+  try {
+    const v = localStorage.getItem(SECTION_KEY);
+    if (SECTIONS.some((x) => x.id === v)) return v as Section;
+  } catch {
+    /* default below */
+  }
+  return "interface";
+}
 
 const UI_SCALES = [80, 90, 100, 110, 125, 150, 175];
 const LINE_HEIGHTS = [1, 1.1, 1.2, 1.3, 1.4, 1.5];
@@ -67,30 +90,24 @@ export function SettingsDialog({ onClose, onPlugins }: { onClose: () => void; on
     if (d) set("downloadDir", d);
   };
 
+  // The last opened section comes back next time.
+  const [section, setSection] = useState<Section>(readSection);
+  const pick = (id: Section) => {
+    setSection(id);
+    try {
+      localStorage.setItem(SECTION_KEY, id);
+    } catch {
+      /* not remembered */
+    }
+  };
+
   const resetAll = async () => {
     // The language stays: resetting shouldn't switch the UI to a language the user may not read.
     if (await ui.confirm(tr("settings.resetTitle"), tr("settings.resetText"))) update({ ...DEFAULT_SETTINGS, language: s.language });
   };
 
-  return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form
-        className="modal modal-wide settings"
-        // Nothing inside is autofocused; take focus so Escape reaches onKeyDown.
-        tabIndex={-1}
-        ref={(el) => {
-          if (el && !el.contains(document.activeElement)) el.focus();
-        }}
-        onSubmit={(e) => {
-          e.preventDefault();
-          onClose();
-        }}
-        onKeyDown={(e) => e.key === "Escape" && onClose()}
-      >
-        <h3>{tr("settings.title")}</h3>
-        <p className="hint">{tr("settings.applyNote")}</p>
-
-        <h4 className="settings-section">{tr("settings.interface")}</h4>
+  const interfaceSection = (
+    <>
         <div className="grid2">
           <label className="field">
             <span>{tr("settings.language")}</span>
@@ -114,9 +131,22 @@ export function SettingsDialog({ onClose, onPlugins }: { onClose: () => void; on
                 ))}
             </select>
           </label>
+          <label className="field">
+            <span>{tr("settings.uiFontSize")}</span>
+            <select value={s.uiFontSize} onChange={(e) => set("uiFontSize", Number(e.target.value))}>
+              {UI_FONT_SIZES.map((v) => (
+                <option key={v} value={v}>
+                  {v === DEFAULT_SETTINGS.uiFontSize ? tr("settings.uiFontSizeDefault", { n: v }) : tr("settings.uiFontSizePx", { n: v })}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
-
-        <h4 className="settings-section">{tr("settings.terminal")}</h4>
+        <p className="hint">{tr("settings.uiFontSizeHint")}</p>
+    </>
+  );
+  const terminalSection = (
+    <>
         <div className="grid2">
           <label className="field span2">
             <span>{tr("settings.font")}</span>
@@ -193,8 +223,10 @@ export function SettingsDialog({ onClose, onPlugins }: { onClose: () => void; on
           <input type="checkbox" checked={s.termCopyOnSelect} onChange={(e) => set("termCopyOnSelect", e.target.checked)} />
           {tr("settings.copyOnSelect")}
         </label>
-
-        <h4 className="settings-section">{tr("settings.files")}</h4>
+    </>
+  );
+  const filesSection = (
+    <>
         <label className="field">
           <span>{tr("settings.downloadDir")}</span>
           <div className="row">
@@ -222,8 +254,10 @@ export function SettingsDialog({ onClose, onPlugins }: { onClose: () => void; on
           <input type="checkbox" checked={s.showHidden} onChange={(e) => set("showHidden", e.target.checked)} />
           {tr("settings.showHidden")}
         </label>
-
-        <h4 className="settings-section">{tr("settings.updates")}</h4>
+    </>
+  );
+  const updatesSection = (
+    <>
         <div className="row">
           <span className="muted">{version ? tr("settings.version", { version }) : null}</span>
           <div className="spacer" />
@@ -235,8 +269,10 @@ export function SettingsDialog({ onClose, onPlugins }: { onClose: () => void; on
           <input type="checkbox" checked={s.checkUpdates} onChange={(e) => set("checkUpdates", e.target.checked)} />
           {tr("settings.checkUpdates")}
         </label>
-
-        <h4 className="settings-section">{tr("plugins.title")}</h4>
+    </>
+  );
+  const pluginsSection = (
+    <>
         <div className="row">
           <span className="hint">{tr("plugins.settingsHint")}</span>
           <div className="spacer" />
@@ -244,15 +280,54 @@ export function SettingsDialog({ onClose, onPlugins }: { onClose: () => void; on
             {tr("plugins.manage")}
           </button>
         </div>
+    </>
+  );
 
-        <div className="modal-actions">
-          <button type="button" className="btn" onClick={resetAll}>
+  const content = { interface: interfaceSection, terminal: terminalSection, files: filesSection, updates: updatesSection, plugins: pluginsSection }[section];
+  const current = SECTIONS.find((x) => x.id === section)!;
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <form
+        className="modal settings"
+        // Nothing inside is autofocused; take focus so Escape reaches onKeyDown.
+        tabIndex={-1}
+        ref={(el) => {
+          if (el && !el.contains(document.activeElement)) el.focus();
+        }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+      >
+        <nav className="settings-nav">
+          <h3>{tr("settings.title")}</h3>
+          {SECTIONS.map((x) => (
+            <button type="button" key={x.id} className={`settings-nav-item ${x.id === section ? "on" : ""}`} onClick={() => pick(x.id)}>
+              {x.icon}
+              {tr(x.label)}
+            </button>
+          ))}
+          <div className="spacer" />
+          <button type="button" className="btn btn-sm settings-reset" onClick={resetAll}>
             {tr("settings.reset")}
           </button>
-          <div className="spacer" />
-          <button type="submit" className="btn btn-primary">
-            {tr("settings.done")}
-          </button>
+        </nav>
+        <div className="settings-main">
+          <div className="settings-head">
+            <h4>{tr(current.label)}</h4>
+            <span className="hint">{tr("settings.applyNote")}</span>
+          </div>
+          <div className="settings-body" key={section}>
+            {content}
+          </div>
+          <div className="modal-actions">
+            <div className="spacer" />
+            <button type="submit" className="btn btn-primary">
+              {tr("settings.done")}
+            </button>
+          </div>
         </div>
       </form>
     </div>

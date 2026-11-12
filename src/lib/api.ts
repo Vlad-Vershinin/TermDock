@@ -139,6 +139,8 @@ export interface Settings {
   language: "ru" | "en";
   /** Webview zoom, percent. */
   uiScale: number;
+  /** Base font size of the interface, px (the terminal has its own). */
+  uiFontSize: number;
   /** Empty = the built-in monospace font stack. */
   termFontFamily: string;
   termFontSize: number;

@@ -13,6 +13,8 @@ pub struct Settings {
     pub language: String,
     /// Webview zoom, percent.
     pub ui_scale: u32,
+    /// Base font size of the interface (menus, panels, dialogs), px. The terminal has its own.
+    pub ui_font_size: u32,
 
     // ---- terminal ----
     /// Empty = the built-in monospace font stack.
@@ -47,6 +49,7 @@ impl Default for Settings {
         Self {
             language: "ru".into(),
             ui_scale: 100,
+            ui_font_size: 13,
             term_font_family: String::new(),
             term_font_size: 14,
             term_line_height: 1.0,
@@ -76,6 +79,7 @@ impl Settings {
         let d = Self::default();
         one_of(&mut self.language, &["ru", "en"], &d.language);
         self.ui_scale = self.ui_scale.clamp(70, 200);
+        self.ui_font_size = self.ui_font_size.clamp(11, 16);
         self.term_font_family = self.term_font_family.trim().to_string();
         self.term_font_size = self.term_font_size.clamp(8, 32);
         self.term_line_height = if self.term_line_height.is_finite() { self.term_line_height.clamp(1.0, 2.0) } else { d.term_line_height };

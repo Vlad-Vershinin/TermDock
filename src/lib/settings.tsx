@@ -9,6 +9,7 @@ import { setLang } from "./i18n";
 export const DEFAULT_SETTINGS: Settings = {
   language: "ru",
   uiScale: 100,
+  uiFontSize: 13,
   termFontFamily: "",
   termFontSize: 14,
   termLineHeight: 1,
@@ -90,6 +91,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         LEGACY_KEYS.forEach((k) => localStorage.removeItem(k));
       });
   }, [persist]);
+
+  // Text sizes in styles.css are multiplied by --fs, so the interface font changes without zooming the layout.
+  const fontSize = settings?.uiFontSize;
+  useEffect(() => {
+    if (fontSize) document.documentElement.style.setProperty("--fs", String(fontSize / DEFAULT_SETTINGS.uiFontSize));
+  }, [fontSize]);
 
   const scale = settings?.uiScale;
   useEffect(() => {
