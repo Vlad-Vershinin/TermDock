@@ -72,7 +72,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 | `components/Editor.tsx` → `CodeEditor.tsx` | Lazy-loaded CodeMirror 6 editor; `lib/codemirror.ts` has languages, theme, encoding list |
 | `components/Sidebar.tsx`, `ServerDialog.tsx` | Server list with folders; add/edit dialog (auth, jump host, connect script, port forwards) |
 | `components/Scripts.tsx`, `Telemetry.tsx`, `Ports.tsx` | Scripts panel/dialog, CPU/RAM/disk widget, port-forward popover |
-| `components/SettingsDialog.tsx` | Settings dialog (gear in the title bar, Ctrl+,): Interface / Terminal / Files; changes apply at once |
+| `components/SettingsDialog.tsx` | Settings dialog (gear in the title bar, Ctrl+,): sections on the left (Interface / Terminal / Files / Updates / Plugins, last one in `td.settingsSection`); changes apply at once |
 | `lib/api.ts` | **Typed wrappers for every Rust command** + shared TS types (mirror of Rust structs) |
 | `lib/i18n.ts` | `useT()` / `t()` (non-hook), `setLang` (called by `SettingsProvider`, also sets `<html lang>`), plural + `{param}` formatting |
 | `lib/locales/ru.ts`, `en.ts` | Flat UI string dictionaries; `ru` defines the keys, `en: Dict` must match |
@@ -116,6 +116,7 @@ SSH is implemented in Rust with `russh`/`russh-sftp` — **no external `ssh` bin
 - **Updates depend on release file names.** `updater.rs` picks the asset by suffix (`-setup.exe`, `.msi`, `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst`) and refuses one without GitHub's `digest`. Renaming bundles or the repo (`LATEST_URL`) breaks updates for every installed copy. Network access is backend-only (`reqwest`); the app CSP still blocks it in the webview. Debug builds always report the `manual` method, so `tauri dev` never installs over a real install.
 - **Telemetry commands run on a separate exec channel**, never in the user's shell, and must not print into the terminal. Remote scripts must survive csh/fish login shells (`sh -c '…'`, no `'`/`!`/backslashes).
 - **Persisted UI state** uses `localStorage` keys prefixed `td.` (`td.sidebar`, `td.split`, `td.showFiles`, …). User preferences (terminal font, downloads folder, …) belong in `settings.json` via `useSettings()` instead: add the field to `settings.rs` (default + `sanitize`), `Settings` in `api.ts`, `DEFAULT_SETTINGS` and `SettingsDialog.tsx`.
+- **Interface font size:** every `font-size` in `styles.css` is `calc(Npx * var(--fs))`; `--fs` = `uiFontSize / 13`, set by `SettingsProvider`. Write new text sizes the same way (and in inline/CodeMirror styles), or they won't follow the setting. The terminal font is separate (`termFontSize`).
 - **CSP** (`tauri.conf.json`) allows only `ipc:` connections and `'self'` assets — no network fetches, no CDN fonts/scripts from the app.
 - Remote paths are always POSIX; local paths may be Windows (`lib/paths.ts`).
 - Keep diffs focused: no drive-by reformatting; match the surrounding style (Rust: rustfmt-ish, 4 spaces; TS/TSX: 2 spaces, double quotes).

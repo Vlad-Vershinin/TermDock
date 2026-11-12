@@ -194,10 +194,9 @@ Example plugins are in [`examples/plugins`](examples/plugins); to write your own
 
 ## ⚙️ Settings and language
 
-The gear in the top right corner (or `Ctrl+,`) opens the settings. Changes apply immediately:
+The gear in the top right corner (or `Ctrl+,`) opens the settings; pick a section on the left. Changes apply immediately:
 
-- **Interface language**: English or Russian.
-- **Interface scale**, if everything looks too small or too large.
+- **Interface**: language (English or Russian), interface font size (the text of menus, panels and lists; the terminal keeps its own), and interface scale if everything looks too small or too large.
 - **Terminal**: font, font size, line height, cursor style and blinking, scrollback length, right-click behavior, copy on select.
 - **Files**: downloads folder (also per server: server settings → "Advanced"), whether to ask for a folder every time, hidden files, the folder the "This computer" pane opens in.
 - **Updates**: automatic update check and a "Check now" button.
