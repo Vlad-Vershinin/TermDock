@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { display: flex; flex-direction: column; gap: 10px; }
+      .row { display: flex; align-items: center; gap: 8px; }
+      .spacer { flex: 1; }
+      table { width: 100%; border-collapse: collapse; }
+      td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+      td.path { font-family: var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0; width: 50%; }
+      tr.active td.name { color: var(--accent); font-weight: 600; }
+      td.actions { text-align: right; white-space: nowrap; }
+      .err { color: var(--err); }
+      input.cmd { width: 220px; font-family: var(--mono); }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <h3 id="title"></h3>
+      <span class="spacer"></span>
+      <button class="primary" id="new"></button>
+      <button id="attach"></button>
+      <button id="refresh"></button>
+    </div>
+    <table><tbody id="chats"></tbody></table>
+    <p class="muted" id="empty"></p>
+    <div class="err" id="error"></div>
+    <div class="row">
+      <label><input type="checkbox" id="auto" /> <span id="autoLabel"></span></label>
+      <span class="spacer"></span>
+      <span class="muted" id="cmdLabel"></span>
+      <input class="cmd" id="cmd" />
+    </div>
+    <script src="tmux.js"></script>
+    <script src="panel.js"></script>
+  </body>
+</html>

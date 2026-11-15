@@ -1,0 +1,99 @@
+{
+  "id": "claude-tmux",
+  "name": {
+    "ru": "Claude в tmux",
+    "en": "Claude in tmux"
+  },
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "author": "TermDock",
+  "description": {
+    "ru": "Чаты Claude Code живут в tmux на сервере и не обрываются вместе с SSH. При подключении TermDock сразу открывает их вместо обычного shell.",
+    "en": "Claude Code chats live in tmux on the server and survive a dropped SSH connection. On connect, TermDock opens them instead of the plain shell."
+  },
+  "main": [
+    "tmux.js",
+    "main.js"
+  ],
+  "permissions": [
+    "server.exec",
+    "terminal.write",
+    "sessions.shell"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "open",
+        "title": {
+          "ru": "Claude: открыть чаты",
+          "en": "Claude: open chats"
+        }
+      },
+      {
+        "id": "new",
+        "title": {
+          "ru": "Claude: новый чат…",
+          "en": "Claude: new chat…"
+        }
+      },
+      {
+        "id": "panel",
+        "title": {
+          "ru": "Claude: список чатов",
+          "en": "Claude: chat list"
+        }
+      },
+      {
+        "id": "auto",
+        "title": {
+          "ru": "Claude: открывать чаты при подключении",
+          "en": "Claude: open chats on connect"
+        }
+      }
+    ],
+    "menus": {
+      "session": [
+        {
+          "command": "open"
+        },
+        {
+          "command": "new"
+        },
+        {
+          "command": "panel"
+        }
+      ],
+      "tab": [
+        {
+          "command": "new"
+        }
+      ],
+      "server": [
+        {
+          "command": "auto"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "open",
+        "key": "Ctrl+Alt+C"
+      },
+      {
+        "command": "new",
+        "key": "Ctrl+Alt+N"
+      }
+    ],
+    "panels": [
+      {
+        "id": "chats",
+        "title": {
+          "ru": "Чаты Claude",
+          "en": "Claude chats"
+        },
+        "location": "session",
+        "entry": "panel.html"
+      }
+    ]
+  }
+}
