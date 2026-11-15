@@ -179,6 +179,8 @@ pub struct ConnectParams {
     pub known_hosts: PathBuf,
     /// Started right after the shell opens.
     pub forwards: Vec<Forward>,
+    /// Run instead of the login shell (from a plugin); None = the usual shell.
+    pub command: Option<String>,
 }
 
 async fn authenticate(handle: &mut Handle<Client>, hop: &Hop) -> Result<(), String> {
@@ -423,7 +425,12 @@ pub async fn connect(sessions: &Sessions, p: ConnectParams, events: TermChannel)
         .request_pty(false, "xterm-256color", p.cols.max(10), p.rows.max(5), 0, 0, &[])
         .await
         .map_err(|e| e.to_string())?;
-    channel.request_shell(false).await.map_err(|e| e.to_string())?;
+    // A plugin may run its own command instead of the login shell (like `ssh -t host 'tmux attach'`);
+    // the session ends when that command exits.
+    match p.command.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        Some(cmd) => channel.exec(false, cmd).await.map_err(|e| e.to_string())?,
+        None => channel.request_shell(false).await.map_err(|e| e.to_string())?,
+    }
 
     let (mut reader, writer) = channel.split();
     let (tx, rx) = mpsc::unbounded_channel();
@@ -531,9 +538,19 @@ impl SshSession {
 
     /// `exec` that fails once stdout + stderr exceed `max_bytes` (for commands we don't control).
     pub async fn exec_limited(&self, command: &str, timeout: Duration, max_bytes: usize) -> Result<ExecOutput, String> {
+        self.exec_input(command, None, timeout, max_bytes).await
+    }
+
+    /// `exec_limited` that writes `stdin` to the command and closes it. `exec(.., "sh -s", script)`
+    /// runs a script without the login shell (bash, fish, csh…) parsing it first.
+    pub async fn exec_input(&self, command: &str, stdin: Option<&[u8]>, timeout: Duration, max_bytes: usize) -> Result<ExecOutput, String> {
         let run = async {
             let mut ch = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
             ch.exec(true, command).await.map_err(|e| e.to_string())?;
+            if let Some(input) = stdin {
+                ch.data(input).await.map_err(|e| e.to_string())?;
+                ch.eof().await.map_err(|e| e.to_string())?;
+            }
             let mut out = ExecOutput::default();
             while let Some(msg) = ch.wait().await {
                 match msg {

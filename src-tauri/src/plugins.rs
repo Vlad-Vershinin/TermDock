@@ -27,6 +27,9 @@ pub const PERMISSIONS: &[&str] = &[
     "servers.read",
     "clipboard.write",
     "openUrl",
+    "notifications",
+    "sessions.open",
+    "sessions.shell",
 ];
 
 const MANIFEST: &str = "plugin.json";
@@ -49,16 +52,42 @@ pub struct Manifest {
     #[serde(default)]
     pub homepage: Option<String>,
     pub api_version: u32,
+    /// One script or several, loaded in order into the background frame.
     #[serde(default = "default_main")]
-    pub main: String,
+    pub main: Main,
     #[serde(default)]
     pub permissions: Vec<String>,
     #[serde(default)]
     pub contributes: Value,
 }
 
-fn default_main() -> String {
-    "main.js".into()
+fn default_main() -> Main {
+    Main::One("main.js".into())
+}
+
+/// `main` in plugin.json: `"main.js"` or `["lib.js", "main.js"]`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Main {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Main {
+    pub fn files(&self) -> Vec<&str> {
+        match self {
+            Main::One(f) => vec![f.as_str()],
+            Main::Many(v) => v.iter().map(String::as_str).collect(),
+        }
+    }
+}
+
+/// A path for a `src` attribute: each segment percent-encoded, so no quote or `<` can break the tag.
+fn src_path(p: &str) -> String {
+    p.split('/')
+        .map(|seg| seg.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -256,10 +285,8 @@ impl Plugins {
         let (Some(m), true) = (&info.manifest, info.enabled) else { return Response::not_found() };
         let root = self.dir.join(first);
         if rest == "__host.html" {
-            let html = format!(
-                "<!doctype html><html><head><meta charset=\"utf-8\"><script src=\"/__termdock/runtime.js\"></script></head><body><script src=\"/{first}/{}\"></script></body></html>",
-                m.main
-            );
+            let scripts: String = m.main.files().iter().map(|f| format!("<script src=\"/{first}/{}\"></script>", src_path(f))).collect();
+            let html = format!("<!doctype html><html><head><meta charset=\"utf-8\"><script src=\"/__termdock/runtime.js\"></script></head><body>{scripts}</body></html>");
             return Response::ok("text/html; charset=utf-8", html.into_bytes());
         }
         let Some(file) = safe_join(&root, rest) else { return Response::not_found() };
@@ -351,8 +378,12 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
     if m.version.trim().is_empty() {
         return Err(tr!("В plugin.json не указана версия", "plugin.json has no version"));
     }
-    if !relative_ok(&m.main) {
-        return Err(tr!("Неверный путь main в plugin.json: {}", "Invalid main path in plugin.json: {}", m.main));
+    let main = m.main.files();
+    if main.is_empty() || main.len() > 20 {
+        return Err(tr!("В main в plugin.json должно быть от 1 до 20 файлов", "main in plugin.json must list 1 to 20 files"));
+    }
+    if let Some(bad) = main.iter().find(|f| !relative_ok(f)) {
+        return Err(tr!("Неверный путь main в plugin.json: {}", "Invalid main path in plugin.json: {}", bad));
     }
     if let Some(p) = m.permissions.iter().find(|p| !PERMISSIONS.contains(&p.as_str())) {
         return Err(tr!("Неизвестное разрешение «{}»", "Unknown permission \"{}\"", p));
@@ -363,8 +394,8 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
 fn read_manifest_dir(dir: &Path) -> Result<Manifest, String> {
     let text = fs::read_to_string(dir.join(MANIFEST)).map_err(|_| tr!("В папке нет plugin.json", "The folder has no plugin.json"))?;
     let m = parse_manifest(&text)?;
-    if !dir.join(&m.main).is_file() {
-        return Err(tr!("Нет главного файла плагина {}", "The plugin's main file {} is missing", m.main));
+    if let Some(missing) = m.main.files().into_iter().find(|f| !dir.join(f).is_file()) {
+        return Err(tr!("Нет главного файла плагина {}", "The plugin's main file {} is missing", missing));
     }
     Ok(m)
 }
@@ -531,7 +562,11 @@ mod tests {
     #[test]
     fn manifest_validation() {
         assert!(parse_manifest(&manifest("")).is_ok());
-        assert_eq!(parse_manifest(&manifest("")).unwrap().main, "main.js");
+        assert_eq!(parse_manifest(&manifest("")).unwrap().main, Main::One("main.js".into()));
+        let many = parse_manifest(&manifest(r#","main":["lib/a.js","main.js"]"#)).unwrap();
+        assert_eq!(many.main.files(), vec!["lib/a.js", "main.js"]);
+        assert!(parse_manifest(&manifest(r#","main":[]"#)).is_err());
+        assert!(parse_manifest(&manifest(r#","main":["ok.js","../evil.js"]"#)).is_err());
         assert!(parse_manifest(&manifest(r#","permissions":["terminal.read"]"#)).is_ok());
         assert!(parse_manifest(&manifest(r#","permissions":["root"]"#)).is_err());
         assert!(parse_manifest(&manifest(r#","main":"../evil.js""#)).is_err());
@@ -584,6 +619,7 @@ mod tests {
         assert_eq!(p.serve("/hello-world/main.js").status, 200);
         assert!(String::from_utf8(p.serve("/hello-world/ui/panel.html").body).unwrap().contains("runtime.js"));
         assert!(String::from_utf8(p.serve("/hello-world/__host.html").body).unwrap().contains("/hello-world/main.js"));
+        assert_eq!(src_path("a b/\"x<.js"), "a%20b/%22x%3C.js");
         assert_eq!(p.serve("/hello-world/../plugins.json").status, 404);
         assert_eq!(p.serve("/hello-world/%2e%2e/plugins.json").status, 404);
         assert_eq!(p.serve("/__termdock/runtime.js").status, 200);

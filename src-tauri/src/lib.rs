@@ -303,6 +303,7 @@ async fn ssh_connect(
     accept: Option<HashMap<String, String>>,
     cols: u32,
     rows: u32,
+    command: Option<String>,
     events: TermChannel,
 ) -> Result<String, String> {
     let server = store.get(&server_id).ok_or_else(|| tr!("Сервер не найден", "Server not found"))?;
@@ -315,7 +316,7 @@ async fn ssh_connect(
         }
         hop.accept_fingerprint = accept.get(&hop.id).cloned();
     }
-    let params = ConnectParams { hops, cols, rows, known_hosts: paths.known_hosts.clone(), forwards: server.forwards.clone() };
+    let params = ConnectParams { hops, cols, rows, known_hosts: paths.known_hosts.clone(), forwards: server.forwards.clone(), command };
     let id = ssh::connect(&sessions, params, events).await?;
     // Remember passwords typed in the prompt only after they actually worked.
     for hop_id in remember.unwrap_or_default() {
@@ -708,9 +709,12 @@ struct PluginExecOutput {
 
 /// `server.exec` for plugins: a background exec channel, like telemetry.
 #[tauri::command]
-async fn plugin_exec(sessions: State<'_, Sessions>, session_id: String, command: String, timeout_secs: Option<u64>) -> Result<PluginExecOutput, String> {
+async fn plugin_exec(sessions: State<'_, Sessions>, session_id: String, command: String, timeout_secs: Option<u64>, stdin: Option<String>) -> Result<PluginExecOutput, String> {
     let timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(30).clamp(1, 600));
-    let out = sessions.get(&session_id)?.exec_limited(&command, timeout, 10 * 1024 * 1024).await?;
+    if stdin.as_ref().is_some_and(|s| s.len() > 1024 * 1024) {
+        return Err(tr!("stdin больше 1 МБ", "stdin is over 1 MB"));
+    }
+    let out = sessions.get(&session_id)?.exec_input(&command, stdin.as_deref().map(str::as_bytes), timeout, 10 * 1024 * 1024).await?;
     Ok(PluginExecOutput {
         code: out.code,
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -724,6 +728,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_drag::init())
         // Plugin files for the sandboxed plugin frames (see plugins.rs).
         .register_uri_scheme_protocol("tdplugin", |ctx, request| {

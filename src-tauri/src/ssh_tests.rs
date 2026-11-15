@@ -183,3 +183,71 @@ async fn local_dynamic_and_remote_forwards() {
     fw.stop_all().await;
     assert!(tokio::net::TcpStream::connect(socks).await.is_err());
 }
+
+/// Key auth when TD_SSH_KEY is set, the agent otherwise.
+fn auth() -> AuthMethod {
+    if env("TD_SSH_KEY").is_some() { AuthMethod::Key } else { AuthMethod::Agent }
+}
+
+/// A hop with its host key already accepted (what the UI sends after "Trust and connect").
+async fn trusted_hop(known: &std::path::Path) -> Hop {
+    let mut hop = test_hop("t", port("TD_SSH_PORT"), auth());
+    if let Err(e) = open_chain(std::slice::from_ref(&hop), known).await {
+        hop.accept_fingerprint = Some(e.split('|').nth(1).expect("HOSTKEY_UNKNOWN expected").to_string());
+    }
+    hop
+}
+
+#[tokio::test]
+#[ignore]
+async fn exec_with_stdin_skips_login_shell_quoting() {
+    let known = std::env::temp_dir().join(format!("td-known-{}", uuid::Uuid::new_v4()));
+    let hop = trusted_hop(&known).await;
+    let sessions = Sessions::default();
+    let (tx, _rx) = std::sync::mpsc::channel::<()>();
+    let events: TermChannel = Channel::new(move |_| {
+        let _ = tx.send(());
+        Ok(())
+    });
+    let params = ConnectParams { hops: vec![hop], cols: 80, rows: 24, known_hosts: known.clone(), forwards: vec![], command: None };
+    let id = connect(&sessions, params, events).await.unwrap();
+    let s = sessions.get(&id).unwrap();
+    // Quotes, $, backticks and ! reach sh as written: no login-shell parsing in between.
+    let script = "v=\"it's \\$HOME\"; printf '%s|' \"$v\" '`!`' \"$((40+2))\"";
+    let out = s.exec_input("sh -s", Some(script.as_bytes()), Duration::from_secs(10), 1 << 20).await.unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "it's $HOME|`!`|42|");
+    assert_eq!(out.code, Some(0));
+    let _ = std::fs::remove_file(&known);
+}
+
+// Multi-threaded: the test blocks on a std channel while the reader task runs.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn command_replaces_the_login_shell() {
+    let known = std::env::temp_dir().join(format!("td-known-{}", uuid::Uuid::new_v4()));
+    let hop = trusted_hop(&known).await;
+    let sessions = Sessions::default();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let events: TermChannel = Channel::new(move |body| {
+        let text = match body {
+            InvokeResponseBody::Raw(b) => String::from_utf8_lossy(&b).into_owned(),
+            InvokeResponseBody::Json(j) => j,
+        };
+        let _ = tx.send(text);
+        Ok(())
+    });
+    let command = Some("printf 'tty:'; tty >/dev/null && echo yes; exit 3".to_string());
+    let params = ConnectParams { hops: vec![hop], cols: 80, rows: 24, known_hosts: known.clone(), forwards: vec![], command };
+    connect(&sessions, params, events).await.unwrap();
+    let mut all = String::new();
+    while let Ok(chunk) = rx.recv_timeout(Duration::from_secs(10)) {
+        all.push_str(&chunk);
+        if all.contains("\"closed\"") {
+            break;
+        }
+    }
+    // The command runs on the session's PTY, and the session ends with its exit code.
+    assert!(all.contains("tty:yes"), "{all}");
+    assert!(all.contains("(exit code 3)") || all.contains("(код 3)"), "{all}");
+    let _ = std::fs::remove_file(&known);
+}
