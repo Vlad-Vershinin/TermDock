@@ -46,6 +46,7 @@ export const IImage = svg(
 export const ITrash = svg(<path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" />);
 export const IEdit = svg(<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />);
 export const IPlus = svg(<path d="M12 5v14M5 12h14" />);
+export const ICheck = svg(<path d="M5 12.5l4.5 4.5L19 7.5" />);
 export const IFolderPlus = svg(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 10v6M9 13h6" />);
 export const IRefresh = svg(<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5" />);
 export const IUp = svg(<path d="M12 19V5M5 12l7-7 7 7" />);

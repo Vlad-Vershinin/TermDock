@@ -1,8 +1,9 @@
 // TermDock plugin runtime: defines `window.termdock` inside a plugin's sandboxed frame.
 // It only talks to the app through postMessage; the app checks the plugin's permissions.
 // Protocol (all messages carry td: 1):
-//   frame → app: hello | call {id, method, params} | commandResult {id, result | error}
+//   frame → app: hello | call {id, method, params} | commandResult {id, result | error} | hookResult {id, result | error}
 //   app → frame: init {data} | result {id, result | error} | event {name, data} | command {id, command, context}
+//                | hook {id, name, data} (the app waits briefly for the answer)
 (() => {
   "use strict";
   if (window.termdock) return;
@@ -13,6 +14,7 @@
   const pending = new Map();
   const commands = new Map();
   const listeners = new Map();
+  const hooks = new Map();
   const info = { plugin: null, language: "en", permissions: [], context: {} };
   let markReady;
   const ready = new Promise((r) => (markReady = r));
@@ -54,6 +56,14 @@
       if (m.name === "language") info.language = m.data;
       if (m.name === "context") info.context = m.data;
       emit(m.name, m.data);
+    } else if (m.kind === "hook") {
+      const fn = hooks.get(m.name);
+      try {
+        const result = fn ? await fn(m.data) : null;
+        post({ kind: "hookResult", id: m.id, result: result === undefined ? null : result });
+      } catch (err) {
+        post({ kind: "hookResult", id: m.id, error: errorText(err) });
+      }
     } else if (m.kind === "command") {
       const fn = commands.get(m.command);
       try {
@@ -103,7 +113,13 @@
         commands.set(id, fn);
         return () => commands.delete(id);
       },
+      /** Runs one of this plugin's commands (from any of its frames), as if the user picked it. */
+      execute: (id, context) => call("commands.execute", { id, context: context || {} }),
+      /** Changes how a command shows in menus and the palette; `options.serverId` = for one server only. */
+      setState: (id, state, options) => call("commands.setState", { id, state, serverId: options && options.serverId }),
     },
+    /** Sends data to this plugin's other frames (background code, panels): their "message" event. */
+    post: (data) => call("frames.post", { data: data === undefined ? null : data }),
     ui: {
       toast: (message, kind) => call("ui.toast", { message: String(message), kind: kind || "info" }),
       confirm: (title, message) => call("ui.confirm", { title, message }),
@@ -112,10 +128,30 @@
       openPanel: (panel, paneId) => call("ui.openPanel", { panel, paneId }),
       /** Closes this panel (a dialog or sidebar panel). */
       closePanel: () => call("ui.closePanel"),
+      /** A system notification when TermDock is in the background, a toast otherwise. */
+      notify: (title, body) => call("ui.notify", { title: String(title), body: body == null ? null : String(body) }),
     },
     sessions: {
       list: () => call("sessions.list"),
       active: () => call("sessions.active"),
+      /** Opens a session to a saved server (new tab, or `split` next to a pane); resolves with its paneId. */
+      open: (serverId, options) => {
+        const o = options || {};
+        return call("sessions.open", { serverId, command: o.command, split: o.split, nearPaneId: o.nearPaneId });
+      },
+      /**
+       * Before each session (and reconnect) opens: return a command to run instead of the login
+       * shell (a string or { command }), or nothing for the usual shell. Answer within 2 s.
+       * Background frame only; needs sessions.shell.
+       */
+      onBeforeShell(fn) {
+        hooks.set("session.beforeShell", async (target) => {
+          const r = await fn(target);
+          if (typeof r === "string") return { command: r };
+          return r && typeof r.command === "string" ? { command: r.command } : null;
+        });
+        return () => hooks.delete("session.beforeShell");
+      },
     },
     terminal: {
       /** Types text into a session's shell ("\r" = Enter). */
@@ -123,7 +159,10 @@
     },
     server: {
       /** Runs a command on the server in the background (not in the terminal). */
-      exec: (paneId, command, options) => call("server.exec", { paneId, command, timeout: options && options.timeout }),
+      exec: (paneId, command, options) => {
+        const o = options || {};
+        return call("server.exec", { paneId, command, timeout: o.timeout, stdin: o.stdin == null ? null : String(o.stdin) });
+      },
     },
     files: {
       home: (paneId) => call("files.home", { paneId }),

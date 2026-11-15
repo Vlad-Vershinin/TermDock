@@ -217,6 +217,8 @@ export const api = {
     remember?: string[];
     /** Confirmed host key fingerprints. */
     accept?: Record<string, string>;
+    /** Run instead of the login shell (from a plugin). */
+    command?: string | null;
     cols: number;
     rows: number;
     onEvent: (e: TermEvent) => void;
@@ -233,6 +235,7 @@ export const api = {
       secrets: args.secrets,
       remember: args.remember,
       accept: args.accept,
+      command: args.command ?? null,
       cols: args.cols,
       rows: args.rows,
       events,
@@ -301,7 +304,7 @@ export const api = {
   pluginUninstall: (id: string) => invoke<void>("plugin_uninstall", { id }),
   pluginStorageGet: (id: string) => invoke<Record<string, unknown>>("plugin_storage_get", { id }),
   pluginStorageSet: (id: string, value: Record<string, unknown>) => invoke<void>("plugin_storage_set", { id, value }),
-  pluginExec: (sessionId: string, command: string, timeoutSecs?: number) => invoke<PluginExecOutput>("plugin_exec", { sessionId, command, timeoutSecs }),
+  pluginExec: (sessionId: string, command: string, timeoutSecs?: number, stdin?: string) => invoke<PluginExecOutput>("plugin_exec", { sessionId, command, timeoutSecs, stdin: stdin ?? null }),
 };
 
 /** Text encoding as the backend names it ("UTF-8", "UTF-16LE", "windows-1251", ...), plus the BOM flag. */

@@ -7,6 +7,8 @@ export interface PaneState {
   id: string;
   serverId: string;
   status: SessionStatus;
+  /** Run instead of the login shell (a plugin opened this session with a command). */
+  command?: { command: string; by: string };
 }
 
 export interface Tab {

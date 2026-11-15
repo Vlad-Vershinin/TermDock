@@ -7,12 +7,13 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useLayout
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl as openExternal } from "@tauri-apps/plugin-opener";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { api, errorText } from "../api";
 import { Lang, t } from "../i18n";
 import { useSettings } from "../settings";
 import { MenuItem, useUi } from "../ui";
-import { focusedPane, PaneHandle, paneEvents, paneRegistry } from "../sessions";
-import { Contributions, ltext, matchKey, MenuWhere, Permission, PluginInfo, PluginPanel, readContributions } from "./types";
+import { focusedPane, PaneHandle, paneEvents, paneRegistry, sessionOpener, shellHook } from "../sessions";
+import { Contributions, LText, ltext, matchKey, MenuWhere, Permission, PluginInfo, PluginPanel, readContributions } from "./types";
 import { IPlugin } from "../../components/Icons";
 
 /** Base URL of the plugin scheme: "tdplugin://localhost/" (Linux, macOS) or "http://tdplugin.localhost/" (Windows). */
@@ -61,10 +62,13 @@ export interface SessionInfo {
   username: string;
   status: string;
   focused: boolean;
+  /** Terminal title (OSC 0/2); only for plugins with terminal.read. */
+  title?: string;
 }
 
-function sessionInfo(paneId: string, h: PaneHandle): SessionInfo {
+function sessionInfo(paneId: string, h: PaneHandle, withTitle = false): SessionInfo {
   return {
+    ...(withTitle ? { title: h.title() } : {}),
     paneId,
     serverId: h.serverId,
     serverName: h.serverName,
@@ -99,6 +103,8 @@ interface PluginsCtx {
   pluginName: (id: string) => string;
   reload: () => Promise<void>;
   runCommand: (pluginId: string, command: string, context: CommandContext) => void;
+  /** What a plugin set with commands.setState (for a server, or for everywhere). */
+  commandState: (pluginId: string, command: string, serverId?: string) => CommandState;
   /** Plugin items for a context menu ([] when there are none). */
   menuItems: (where: MenuWhere, context: CommandContext) => MenuItem[];
   /** Runs a plugin keybinding; true when one matched. */
@@ -108,6 +114,13 @@ interface PluginsCtx {
   closeSidebar: () => void;
   sessionPanel: (paneId: string) => PluginPanel | null;
   setSessionPanel: (paneId: string, panel: PluginPanel | null) => void;
+}
+
+/** Set by a plugin with commands.setState. */
+export interface CommandState {
+  title?: LText;
+  checked?: boolean;
+  enabled?: boolean;
 }
 
 const Ctx = createContext<PluginsCtx>(null!);
@@ -124,7 +137,27 @@ const NEEDS: Record<string, Permission> = {
   "servers.list": "servers.read",
   "clipboard.writeText": "clipboard.write",
   openUrl: "openUrl",
+  "sessions.open": "sessions.open",
+  "ui.notify": "notifications",
 };
+
+/** Limits on what one call may carry. */
+const MAX_STDIN = 1 << 20;
+const MAX_MESSAGE = 1 << 20;
+/** How long a session waits for plugins to choose a shell command. */
+const HOOK_TIMEOUT = 2000;
+
+const stateKey = (pluginId: string, command: string) => `${pluginId}:${command}`;
+
+function readState(v: unknown): CommandState {
+  if (!v || typeof v !== "object") throw new Error('"state" must be an object');
+  const o = v as Record<string, unknown>;
+  const out: CommandState = {};
+  if (typeof o.title === "string" || (o.title && typeof o.title === "object")) out.title = o.title as LText;
+  if (typeof o.checked === "boolean") out.checked = o.checked;
+  if (typeof o.enabled === "boolean") out.enabled = o.enabled;
+  return out;
+}
 
 const panelKey = (p: PluginPanel) => `${p.pluginId}:${p.id}`;
 
@@ -143,11 +176,13 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
   const [sidebar, setSidebar] = useState<PluginPanel | null>(null);
   const [dialog, setDialog] = useState<{ panel: PluginPanel; paneId: string | null } | null>(null);
   const [sessionPanels, setSessionPanels] = useState<Record<string, PluginPanel | null>>({});
+  /** commands.setState: per command, a state for everywhere and per server. */
+  const [commandStates, setCommandStates] = useState<Record<string, { all?: CommandState; servers?: Record<string, CommandState> }>>({});
 
   // The useUi() object changes on every render of its provider; everything long-lived below reads
   // it (and the rest of the state) through this ref, so that plugin frames are never remounted
   // because a toast or a menu was shown.
-  const live = useRef({ plugins, enabled: [] as PluginInfo[], contributions: null as unknown as Contributions, language, ui });
+  const live = useRef({ plugins, enabled: [] as PluginInfo[], contributions: null as unknown as Contributions, language, ui, commandStates });
 
   const reload = useCallback(async () => {
     try {
@@ -175,7 +210,7 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
     return all;
   }, [enabled]);
 
-  live.current = { plugins, enabled, contributions, language, ui };
+  live.current = { plugins, enabled, contributions, language, ui, commandStates };
 
   const pluginName = useCallback((id: string) => {
     const p = live.current.plugins.find((x) => x.id === id);
@@ -207,40 +242,64 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
   const commandSeq = useRef(0);
   const pendingCommands = useRef(new Map<number, { pluginId: string; resolve: (v: unknown) => void; reject: (e: Error) => void }>());
 
-  const runCommand = useCallback(
-    (pluginId: string, command: string, context: CommandContext) => {
-      const host = [...frames].find((f) => f.pluginId === pluginId && f.kind === "host");
-      if (!host) return live.current.ui.toast(t("plugins.notLoaded", { name: pluginName(pluginId) }), "error");
-      const id = ++commandSeq.current;
-      new Promise((resolve, reject) => {
+  /** Runs a command in the plugin's background frame; resolves with what its handler returned. */
+  const invokeCommand = useCallback(
+    (pluginId: string, command: string, context: CommandContext) =>
+      new Promise<unknown>((resolve, reject) => {
+        const host = [...frames].find((f) => f.pluginId === pluginId && f.kind === "host");
+        if (!host) return reject(new Error(t("plugins.notLoaded", { name: pluginName(pluginId) })));
+        const id = ++commandSeq.current;
         pendingCommands.current.set(id, { pluginId, resolve, reject });
         post(host, { kind: "command", id, command, context });
-      }).catch((e) => live.current.ui.toast(`${pluginName(pluginId)}: ${errorText(e)}`, "error"));
-    },
+      }),
     [pluginName],
   );
+
+  const runCommand = useCallback(
+    (pluginId: string, command: string, context: CommandContext) => {
+      invokeCommand(pluginId, command, context).catch((e) => live.current.ui.toast(`${pluginName(pluginId)}: ${errorText(e)}`, "error"));
+    },
+    [invokeCommand, pluginName],
+  );
+
+  const commandState = useCallback((pluginId: string, command: string, serverId?: string): CommandState => {
+    const s = live.current.commandStates[stateKey(pluginId, command)];
+    if (!s) return {};
+    return { ...s.all, ...(serverId ? s.servers?.[serverId] : undefined) };
+  }, []);
 
   const menuItems = useCallback(
     (where: MenuWhere, context: CommandContext): MenuItem[] => {
       const { contributions: c, language: l } = live.current;
+      const serverId = context.serverId ?? (context.paneId ? paneRegistry.get(context.paneId)?.serverId : undefined);
       return c.menus[where]
         .filter((m) => !m.side || !context.side || m.side === context.side)
         .map((m) => {
           const cmd = c.commands.find((x) => x.pluginId === m.pluginId && x.id === m.command)!;
-          return { label: ltext(cmd.title, l), icon: <IPlugin size={13} />, hint: pluginName(m.pluginId), onClick: () => runCommand(m.pluginId, m.command, context) };
+          const st = commandState(m.pluginId, m.command, serverId);
+          return {
+            label: ltext(st.title ?? cmd.title, l),
+            icon: <IPlugin size={13} />,
+            hint: pluginName(m.pluginId),
+            checked: st.checked,
+            disabled: st.enabled === false,
+            onClick: () => runCommand(m.pluginId, m.command, context),
+          };
         });
     },
-    [pluginName, runCommand],
+    [pluginName, runCommand, commandState],
   );
 
   const handleKey = useCallback(
     (e: KeyboardEvent) => {
       const kb = live.current.contributions.keybindings.find((k) => matchKey(e, k.key));
       if (!kb) return false;
+      const paneId = focusedPane.get();
+      if (commandState(kb.pluginId, kb.command, paneId ? paneRegistry.get(paneId)?.serverId : undefined).enabled === false) return false;
       runCommand(kb.pluginId, kb.command, { paneId: focusedPane.get() });
       return true;
     },
-    [runCommand],
+    [runCommand, commandState],
   );
 
   // ---- calls from plugins ----
@@ -313,11 +372,66 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
           closePanelOf(f);
           return null;
         case "sessions.list":
-          return paneRegistry.all().map(([id, h]) => sessionInfo(id, h));
+          return paneRegistry.all().map(([id, h]) => sessionInfo(id, h, info.granted.includes("terminal.read")));
         case "sessions.active": {
           const id = focusedPane.get();
           const h = paneRegistry.get(id);
-          return id && h ? sessionInfo(id, h) : null;
+          return id && h ? sessionInfo(id, h, info.granted.includes("terminal.read")) : null;
+        }
+        case "sessions.open": {
+          const serverId = str(params, "serverId");
+          if (!(await api.listServers()).some((x) => x.id === serverId)) throw new Error(`Unknown server "${serverId}"`);
+          let command: string | undefined;
+          if (params.command != null) {
+            command = str(params, "command").trim();
+            if (command.length > 4096) throw new Error("the command is longer than 4096 characters");
+            // Replacing the shell needs the same permission as the connect hook.
+            if (command && !info.granted.includes("sessions.shell")) throw new Error(t("plugins.denied", { permission: "sessions.shell" }));
+          }
+          const split = params.split === "row" || params.split === "column" ? params.split : undefined;
+          const nearPaneId = typeof params.nearPaneId === "string" ? params.nearPaneId : undefined;
+          if (!sessionOpener.open) throw new Error("sessions can't be opened now");
+          return sessionOpener.open(serverId, { by: name, command: command || undefined, split, nearPaneId });
+        }
+        case "commands.execute": {
+          const id = str(params, "id");
+          // Only this plugin's own declared commands.
+          if (!live.current.contributions.commands.some((c) => c.pluginId === f.pluginId && c.id === id)) throw new Error(`Unknown command "${id}"`);
+          const context = params.context && typeof params.context === "object" ? (params.context as CommandContext) : {};
+          return invokeCommand(f.pluginId, id, context);
+        }
+        case "commands.setState": {
+          const id = str(params, "id");
+          if (!live.current.contributions.commands.some((c) => c.pluginId === f.pluginId && c.id === id)) throw new Error(`Unknown command "${id}"`);
+          const state = readState(params.state);
+          const serverId = typeof params.serverId === "string" ? params.serverId : undefined;
+          setCommandStates((all) => {
+            const cur = all[stateKey(f.pluginId, id)] ?? {};
+            const next = serverId ? { ...cur, servers: { ...cur.servers, [serverId]: state } } : { ...cur, all: state };
+            return { ...all, [stateKey(f.pluginId, id)]: next };
+          });
+          return null;
+        }
+        case "frames.post": {
+          const data = params.data ?? null;
+          if (JSON.stringify(data).length > MAX_MESSAGE) throw new Error("the message is larger than 1 MB");
+          const from = f.kind === "host" ? "main" : (f.panel?.id ?? "panel");
+          // Only to the other frames of the same plugin.
+          broadcast("message", { from, data }, (x) => x.pluginId === f.pluginId && x !== f);
+          return null;
+        }
+        case "ui.notify": {
+          const title = `${name}: ${str(params, "title")}`;
+          const body = typeof params.body === "string" ? params.body : undefined;
+          // While TermDock is in front, an in-app toast is enough.
+          if (document.hasFocus()) {
+            live.current.ui.toast(body ? `${title}. ${body}` : title);
+            return null;
+          }
+          let granted = await isPermissionGranted();
+          if (!granted) granted = (await requestPermission()) === "granted";
+          if (granted) sendNotification({ title, body });
+          return null;
         }
         case "terminal.subscribe":
           f.output = true;
@@ -327,7 +441,12 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
           return null;
         case "server.exec": {
           const timeout = typeof params.timeout === "number" ? Math.round(params.timeout / 1000) || 1 : undefined;
-          return api.pluginExec(session(), str(params, "command"), timeout);
+          let stdin: string | undefined;
+          if (params.stdin != null) {
+            stdin = str(params, "stdin");
+            if (new TextEncoder().encode(stdin).length > MAX_STDIN) throw new Error("stdin is larger than 1 MB");
+          }
+          return api.pluginExec(session(), str(params, "command"), timeout, stdin);
         }
         case "files.home":
           return api.remoteHome(session());
@@ -382,8 +501,43 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
           throw new Error(`Unknown method "${method}"`);
       }
     },
-    [pluginName, openPanel, closePanelOf, store, mutateStore],
+    [pluginName, openPanel, closePanelOf, store, mutateStore, invokeCommand],
   );
+
+  // ---- hooks: plugins answer synchronously-ish before something happens ----
+  const hookSeq = useRef(0);
+  const pendingHooks = useRef(new Map<number, { frame: Frame; resolve: (v: unknown) => void }>());
+  const askHook = useCallback((f: Frame, name: string, data: unknown) => {
+    const id = ++hookSeq.current;
+    return new Promise<unknown>((resolve) => {
+      pendingHooks.current.set(id, { frame: f, resolve });
+      post(f, { kind: "hook", id, name, data });
+      setTimeout(() => {
+        if (pendingHooks.current.delete(id)) resolve(null);
+      }, HOOK_TIMEOUT);
+    });
+  }, []);
+
+  // Before a session opens, plugins with sessions.shell may replace the login shell with a command.
+  useEffect(() => {
+    shellHook.ask = async (target) => {
+      const hosts = live.current.enabled
+        .filter((p) => p.granted.includes("sessions.shell"))
+        .map((p) => [...frames].find((f) => f.pluginId === p.id && f.kind === "host"))
+        .filter((f): f is Frame => !!f);
+      // Asked together; the first plugin in the list that answers with a command wins.
+      const answers = await Promise.all(hosts.map((f) => askHook(f, "session.beforeShell", { ...target, status: "connecting", focused: false })));
+      for (let i = 0; i < hosts.length; i++) {
+        const a = answers[i] as { command?: unknown } | null;
+        const command = a && typeof a.command === "string" ? a.command.trim() : "";
+        if (command && command.length <= 4096) return { command, pluginName: pluginName(hosts[i].pluginId) };
+      }
+      return null;
+    };
+    return () => {
+      shellHook.ask = null;
+    };
+  }, [askHook, pluginName]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
@@ -410,6 +564,12 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
           (result) => post(f, { kind: "result", id: m.id, result: result ?? null }),
           (err) => post(f, { kind: "result", id: m.id, error: errorText(err) }),
         );
+      } else if (m.kind === "hookResult") {
+        const p = pendingHooks.current.get(m.id);
+        // Only the frame that was asked may answer.
+        if (!p || p.frame !== f) return;
+        pendingHooks.current.delete(m.id);
+        p.resolve(m.error != null ? null : m.result);
       } else if (m.kind === "commandResult") {
         const p = pendingCommands.current.get(m.id);
         // Only the plugin that was asked may answer.
@@ -463,6 +623,12 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
       } else if (e.type === "focus") {
         const h = paneRegistry.get(e.paneId);
         broadcast("session.focus", e.paneId && h ? sessionInfo(e.paneId, h) : null);
+      } else if (e.type === "ready") {
+        const h = paneRegistry.get(e.paneId);
+        if (h) broadcast("session.ready", sessionInfo(e.paneId, h));
+      } else if (e.type === "title") {
+        const canRead = (f: Frame) => !!live.current.plugins.find((p) => p.id === f.pluginId)?.granted.includes("terminal.read");
+        broadcast("terminal.title", { paneId: e.paneId, title: e.title }, canRead);
       }
     });
     return () => {
@@ -491,6 +657,7 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
       pluginName,
       reload,
       runCommand,
+      commandState,
       menuItems,
       handleKey,
       openPanel,
@@ -499,7 +666,9 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
       sessionPanel: (paneId) => sessionPanels[paneId] ?? null,
       setSessionPanel: (paneId, panel) => setSessionPanels((s) => ({ ...s, [paneId]: panel })),
     }),
-    [plugins, version, contributions, pluginName, reload, runCommand, menuItems, handleKey, openPanel, sidebar, sessionPanels],
+    // commandStates: the palette re-renders when a plugin changes a command's state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plugins, version, contributions, pluginName, reload, runCommand, commandState, menuItems, handleKey, openPanel, sidebar, sessionPanels, commandStates],
   );
 
   return (

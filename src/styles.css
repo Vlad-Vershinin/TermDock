@@ -499,3 +499,4 @@ code.fingerprint { display: block; padding: 10px; border-radius: 6px; background
 @media (max-width: 720px) {
   .settings-nav { width: 150px; }
 }
+.palette-nocheck { display: inline-block; width: 13px; flex: none; }

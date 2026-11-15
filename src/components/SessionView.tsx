@@ -6,7 +6,7 @@ import { openUrl } from "../lib/open";
 import "@xterm/xterm/css/xterm.css";
 import { api, configJumpText, errorText, Server } from "../lib/api";
 import { DropDetail } from "../lib/dnd";
-import { paneEvents, paneRegistry } from "../lib/sessions";
+import { paneEvents, paneRegistry, shellHook } from "../lib/sessions";
 import { clampFontSize, DEFAULT_SETTINGS, terminalFont, useSettings } from "../lib/settings";
 import { useTransfers } from "../lib/transfers";
 import { MenuItem, useUi } from "../lib/ui";
@@ -38,9 +38,11 @@ interface Props {
   onStatus: (s: SessionStatus) => void;
   onSplit: (dir: "row" | "column") => void;
   onClose: () => void;
+  /** Run instead of the login shell; `by` = the plugin that asked (sessions.open). */
+  command?: { command: string; by: string } | null;
 }
 
-export function SessionView({ paneId, server, visible, focused, split: inSplit, onFocus, onStatus, onSplit, onClose }: Props) {
+export function SessionView({ paneId, server, visible, focused, split: inSplit, onFocus, onStatus, onSplit, onClose, command: openCommand }: Props) {
   const ui = useUi();
   const plugins = usePlugins();
   const pluginPanel = plugins.sessionPanel(paneId);
@@ -61,6 +63,10 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
   stepsRef.current = steps;
   /** Time of the last output from the server (to wait for the login banner before the connect script). */
   const lastOutput = useRef(0);
+  /** Command a plugin runs instead of the shell in the current connection (null = the shell). */
+  const shellCommand = useRef<string | null>(null);
+  const openCommandRef = useRef(openCommand);
+  const title = useRef("");
   const transfers = useTransfers();
   const termEl = useRef<HTMLDivElement>(null);
   const termZone = useRef<HTMLDivElement>(null);
@@ -107,7 +113,19 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         if (disposed.current) return;
         if (cfg?.jumps.length) via = trNow("session.viaConfig", { via: configJumpText(cfg) });
       }
+      // A plugin with sessions.shell (or sessions.open) may replace the login shell with its command.
+      let custom = openCommandRef.current ?? null;
+      if (!custom && shellHook.ask) {
+        const r = await shellHook
+          .ask({ paneId, serverId: server.id, serverName: server.name, host: server.host, port: server.port, username: server.username })
+          .catch(() => null);
+        if (disposed.current) return;
+        if (r) custom = { command: r.command, by: r.pluginName };
+      }
+      shellCommand.current = custom?.command ?? null;
+      title.current = "";
       t.write(`\r\n\x1b[90m${trNow("session.connecting", { target: `${server.username}@${server.host}:${server.port}`, via })}\x1b[0m\r\n`);
+      if (custom) t.write(`\x1b[90m${trNow("session.pluginCommand", { name: custom.by, command: custom.command })}\x1b[0m\r\n`);
       try {
         fit.current?.fit();
         let id: string | null = null;
@@ -117,6 +135,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
           secrets: opts.secrets,
           remember: opts.remember,
           accept: opts.accept,
+          command: custom?.command,
           cols: t.cols,
           rows: t.rows,
           onEvent: (e) => {
@@ -324,6 +343,11 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       send(d);
     });
     t.onBinary((d) => sessionRef.current && api.write(sessionRef.current, Uint8Array.from(d, (c) => c.charCodeAt(0) & 255)));
+    // Programs set the title with OSC 0/2 (tmux with set-titles, shells with PROMPT_COMMAND…).
+    t.onTitleChange((value) => {
+      title.current = value;
+      paneEvents.emit({ type: "title", paneId, title: value });
+    });
     t.onResize(({ cols, rows }) => sessionRef.current && api.resize(sessionRef.current, cols, rows).catch(() => {}));
 
     // Zoom changes the global setting, so every open terminal follows (applied by the effect below).
@@ -473,6 +497,7 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       username: server.username,
       sessionId: () => sessionRef.current,
       status: () => statusRef.current,
+      title: () => title.current,
       send: sendText,
       runSteps: (name, list) => {
         if (!sessionRef.current || list.length === 0) return false;
@@ -485,13 +510,13 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
     return () => paneRegistry.delete(paneId);
   }, [paneId, server.id, server.name, server.host, server.port, server.username, sendText]);
 
-  // The server's connect script: runs once the login banner / prompt has settled.
+  // Once the login banner / prompt has settled: plugins get "session.ready", then the server's
+  // connect script runs (not when a plugin replaced the shell: the script would type into its program).
   const onConnectedRef = useRef(() => {});
   onConnectedRef.current = () => {
-    const id = server.connectScript;
-    if (!id) return;
-    const script = scripts.find((x) => x.id === id);
-    if (!script) return ui.toast(trNow("session.connectScriptMissing", { name: server.name }), "error");
+    const id = shellCommand.current ? null : server.connectScript;
+    const script = id ? scripts.find((x) => x.id === id) : undefined;
+    if (id && !script) ui.toast(trNow("session.connectScriptMissing", { name: server.name }), "error");
     const session = sessionRef.current;
     const started = Date.now();
     const timer = setInterval(() => {
@@ -499,7 +524,8 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       const quiet = Date.now() - Math.max(lastOutput.current, started) > 400;
       if (quiet || Date.now() - started > 5000) {
         clearInterval(timer);
-        runScript(script, paneId);
+        if (script) runScript(script, paneId);
+        paneEvents.emit({ type: "ready", paneId });
       }
     }, 100);
   };

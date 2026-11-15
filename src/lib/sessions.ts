@@ -11,6 +11,8 @@ export interface PaneHandle {
   /** Backend session id while connected. */
   sessionId: () => string | null;
   status: () => SessionStatus;
+  /** The terminal title set by the program (OSC 0/2), "" when none. */
+  title: () => string;
   /** Sends raw input to the shell. Returns false when the pane is not connected. */
   send: (text: string) => boolean;
   /** Starts a step-by-step run: sends the first command, the rest one per click. False when not connected. */
@@ -35,7 +37,10 @@ export type PaneEvent =
   | { type: "status"; paneId: string; status: SessionStatus }
   | { type: "output"; paneId: string; data: Uint8Array }
   | { type: "focus"; paneId: string | null }
-  | { type: "removed"; paneId: string };
+  | { type: "removed"; paneId: string }
+  /** Connected and the login output has settled (when the connect script starts). */
+  | { type: "ready"; paneId: string }
+  | { type: "title"; paneId: string; title: string };
 
 const paneListeners = new Set<(e: PaneEvent) => void>();
 
@@ -81,3 +86,30 @@ export const remotePaneRegistry = {
   /** All registered panes except `paneId`, in registration order. */
   others: (paneId: string) => [...remotePanes].filter(([id]) => id !== paneId).map(([id, h]) => ({ paneId: id, ...h })),
 };
+
+// Hooks between the app and the plugin host (set by App / PluginsProvider, used by SessionView).
+
+export interface OpenSessionOptions {
+  /** Name of the plugin asking (shown in the terminal next to its command). */
+  by: string;
+  /** Run instead of the login shell. */
+  command?: string;
+  /** Open next to `nearPaneId` (or the focused pane) instead of a new tab. */
+  split?: "row" | "column";
+  nearPaneId?: string;
+}
+
+/** Opens a session to a saved server; returns its pane id. Set by App. */
+export const sessionOpener: { open: ((serverId: string, opts: OpenSessionOptions) => string) | null } = { open: null };
+
+export interface ShellTarget {
+  paneId: string;
+  serverId: string;
+  serverName: string;
+  host: string;
+  port: number;
+  username: string;
+}
+
+/** Asks plugins (sessions.shell) for a command to run instead of the login shell. Set by the plugin host. */
+export const shellHook: { ask: ((target: ShellTarget) => Promise<{ command: string; pluginName: string } | null>) | null } = { ask: null };

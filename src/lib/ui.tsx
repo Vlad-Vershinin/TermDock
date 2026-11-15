@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { IChevronRight } from "../components/Icons";
+import { ICheck, IChevronRight } from "../components/Icons";
 import { t as tr } from "./i18n";
 
 // ---------- toasts ----------
@@ -24,7 +24,7 @@ type DialogResult = Record<string, string | boolean> | null;
 // ---------- context menu ----------
 
 export type MenuItem =
-  | { label: string; icon?: ReactNode; hint?: string; danger?: boolean; disabled?: boolean; onClick: () => void }
+  | { label: string; icon?: ReactNode; hint?: string; danger?: boolean; disabled?: boolean; checked?: boolean; onClick: () => void }
   /** Opens a nested menu to the side (on hover, click or ArrowRight). */
   | { label: string; icon?: ReactNode; disabled?: boolean; submenu: MenuItem[] }
   | { header: string }
@@ -386,7 +386,8 @@ function MenuPanel({
               it.onClick();
             }}
           >
-            <span className="ctx-icon">{it.icon}</span>
+            {/* A toggle item shows a check mark (or nothing) instead of its icon. */}
+            <span className="ctx-icon">{it.checked === undefined ? it.icon : it.checked ? <ICheck size={13} /> : null}</span>
             <span className="ctx-label">{it.label}</span>
             {it.hint && <span className="ctx-hint">{it.hint}</span>}
           </button>

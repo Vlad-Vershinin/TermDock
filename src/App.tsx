@@ -20,7 +20,7 @@ import { CommandPalette, PluginSidebar, PluginsDialog } from "./components/Plugi
 import { PluginsProvider, usePlugins } from "./lib/plugins/host";
 import { UpdatesProvider, useUpdates } from "./lib/updates";
 import { ltext } from "./lib/plugins/types";
-import { focusedPane as focusedPaneStore } from "./lib/sessions";
+import { focusedPane as focusedPaneStore, sessionOpener } from "./lib/sessions";
 import { IClose, ICopy, IDownload, IEdit, IHome, IKey, ILock, IPlay, IPlugin, IPlus, IScript, ISettings, ISidebar, ISplitDown, ISplitRight, ITransfer } from "./components/Icons";
 
 const MAX_PANES = 4;
@@ -43,7 +43,7 @@ export default function App() {
   );
 }
 
-const newPane = (serverId: string): PaneState => ({ id: crypto.randomUUID(), serverId, status: "connecting" });
+const newPane = (serverId: string, command?: PaneState["command"]): PaneState => ({ id: crypto.randomUUID(), serverId, status: "connecting", command });
 
 const STATUS_RANK: Record<ServerState["status"], number> = { connected: 4, connecting: 3, error: 2, closed: 1, idle: 0 };
 
@@ -127,11 +127,12 @@ function Main() {
 
   const updateTab = useCallback((id: string, f: (t: Tab) => Tab) => setTabs((list) => list.map((t) => (t.id === id ? f(t) : t))), []);
 
-  const addTab = useCallback((serverId: string) => {
-    const pane = newPane(serverId);
+  const addTab = useCallback((serverId: string, command?: PaneState["command"]) => {
+    const pane = newPane(serverId, command);
     const tab: Tab = { id: crypto.randomUUID(), panes: [pane], dir: "row", sizes: [1], focus: pane.id };
     setTabs((t) => [...t, tab]);
     setActive(tab.id);
+    return pane.id;
   }, []);
 
   const openSession = useCallback(
@@ -164,12 +165,12 @@ function Main() {
 
   /** Adds a pane next to the focused one. serverId defaults to the focused pane's server (= duplicate). */
   const splitTab = useCallback(
-    (tabId: string, dir: SplitDir, serverId?: string) => {
+    (tabId: string, dir: SplitDir, serverId?: string, near?: string, command?: PaneState["command"]): string | undefined => {
       const tab = tabsRef.current.find((t) => t.id === tabId);
       if (!tab) return;
-      if (tab.panes.length >= MAX_PANES) return ui.toast(tr("app.maxPanes", { n: MAX_PANES }), "error");
-      const fi = Math.max(0, tab.panes.findIndex((p) => p.id === tab.focus));
-      const pane = newPane(serverId ?? tab.panes[fi].serverId);
+      if (tab.panes.length >= MAX_PANES) return void ui.toast(tr("app.maxPanes", { n: MAX_PANES }), "error");
+      const fi = Math.max(0, tab.panes.findIndex((p) => p.id === (near ?? tab.focus)));
+      const pane = newPane(serverId ?? tab.panes[fi].serverId, command);
       const panes = [...tab.panes];
       panes.splice(fi + 1, 0, pane);
       const sizes = [...tab.sizes];
@@ -178,9 +179,30 @@ function Main() {
       sizes.splice(fi, 1, half, half);
       updateTab(tabId, (t) => ({ ...t, panes, sizes, dir, focus: pane.id }));
       setActive(tabId);
+      return pane.id;
     },
     [ui, updateTab],
   );
+
+  // Plugins (sessions.open) open sessions through the same paths as the user.
+  useEffect(() => {
+    sessionOpener.open = (serverId, o) => {
+      const command = o.command ? { command: o.command, by: o.by } : undefined;
+      if (o.split) {
+        const near = o.nearPaneId ?? focusedPaneStore.get();
+        const tab = tabsRef.current.find((t) => t.panes.some((p) => p.id === near));
+        // A full tab gets a new tab instead.
+        if (tab && tab.panes.length < MAX_PANES) {
+          const id = splitTab(tab.id, o.split, serverId, near ?? undefined, command);
+          if (id) return id;
+        }
+      }
+      return addTab(serverId, command);
+    };
+    return () => {
+      sessionOpener.open = null;
+    };
+  }, [addTab, splitTab]);
 
   const closePane = useCallback(
     (tabId: string, paneId: string) => {
@@ -646,6 +668,7 @@ function Main() {
                       onStatus={h.onStatus}
                       onSplit={h.onSplit}
                       onClose={h.onClose}
+                      command={p.command}
                     />,
                     paneHost(p.id),
                     p.id,

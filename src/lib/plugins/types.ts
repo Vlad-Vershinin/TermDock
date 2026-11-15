@@ -15,11 +15,14 @@ export const PERMISSIONS = [
   "servers.read",
   "clipboard.write",
   "openUrl",
+  "notifications",
+  "sessions.open",
+  "sessions.shell",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 /** Permissions that let a plugin act on servers; shown in red when installing. */
-export const DANGEROUS: Permission[] = ["terminal.write", "server.exec", "files.write"];
+export const DANGEROUS: Permission[] = ["terminal.write", "server.exec", "files.write", "sessions.open", "sessions.shell"];
 
 export interface Manifest {
   id: string;
@@ -29,7 +32,8 @@ export interface Manifest {
   author?: string | null;
   homepage?: string | null;
   apiVersion: number;
-  main: string;
+  /** One script or several, loaded in order. */
+  main: string | string[];
   permissions: Permission[];
   contributes?: unknown;
 }

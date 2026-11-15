@@ -6,8 +6,8 @@ import { PluginPanelFrame, usePlugins } from "../lib/plugins/host";
 import { DANGEROUS, ltext, Manifest, Permission, PluginInfo } from "../lib/plugins/types";
 import { useSettings } from "../lib/settings";
 import { useUi } from "../lib/ui";
-import { focusedPane } from "../lib/sessions";
-import { IClose, IFolder, IPlugin, IRefresh } from "./Icons";
+import { focusedPane, paneRegistry } from "../lib/sessions";
+import { ICheck, IClose, IFolder, IPlugin, IRefresh } from "./Icons";
 
 const permKey = (p: Permission) => `plugins.perm.${p}` as Key;
 
@@ -169,16 +169,20 @@ export function PluginsDialog({ onClose }: { onClose: () => void }) {
 export function CommandPalette({ onClose }: { onClose: () => void }) {
   const tr = useT();
   const { settings } = useSettings();
-  const { contributions, pluginName, runCommand } = usePlugins();
+  const { contributions, pluginName, runCommand, commandState } = usePlugins();
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const paneId = focusedPane.get();
+    const serverId = paneId ? paneRegistry.get(paneId)?.serverId : undefined;
     return contributions.commands
-      .map((c) => ({ c, title: ltext(c.title, settings.language), plugin: pluginName(c.pluginId) }))
+      .map((c) => ({ c, st: commandState(c.pluginId, c.id, serverId), plugin: pluginName(c.pluginId) }))
+      .filter((x) => x.st.enabled !== false)
+      .map((x) => ({ ...x, title: ltext(x.st.title ?? x.c.title, settings.language) }))
       .filter((x) => words.every((w) => `${x.title} ${x.plugin}`.toLowerCase().includes(w)));
-  }, [q, contributions, settings.language, pluginName]);
+  }, [q, contributions, settings.language, pluginName, commandState]);
   useEffect(() => setSel(0), [q]);
   useEffect(() => {
     listRef.current?.querySelector(".palette-item.on")?.scrollIntoView({ block: "nearest" });
@@ -212,7 +216,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           {items.length === 0 && <div className="muted palette-empty">{tr("plugins.paletteEmpty")}</div>}
           {items.map((x, i) => (
             <div key={`${x.c.pluginId}:${x.c.id}`} className={`palette-item ${i === sel ? "on" : ""}`} onMouseEnter={() => setSel(i)} onMouseDown={(e) => (e.preventDefault(), pick(i))}>
-              <IPlugin size={13} />
+              {x.st.checked === undefined ? <IPlugin size={13} /> : x.st.checked ? <ICheck size={13} /> : <span className="palette-nocheck" />}
               <span className="palette-title">{x.title}</span>
               <span className="muted">{x.plugin}</span>
             </div>
