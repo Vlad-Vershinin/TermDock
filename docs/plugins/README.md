@@ -92,7 +92,7 @@ my-plugin/
 | `name` | да | Название. Строка или `{ "ru": "…", "en": "…" }`. |
 | `version` | да | Версия плагина, например `"1.2.0"`. |
 | `apiVersion` | да | Версия API TermDock. Сейчас `1`. Плагин с большей версией TermDock откажется устанавливать. |
-| `main` | нет | Файл фонового кода, по умолчанию `main.js`. |
+| `main` | нет | Файл фонового кода, по умолчанию `main.js`. Можно указать список: `["lib.js", "main.js"]`, файлы загрузятся по порядку (удобно для общего кода фона и панелей). |
 | `description` | нет | Описание (строка или `{ ru, en }`), видно в списке плагинов и при установке. |
 | `author`, `homepage` | нет | Автор и ссылка. |
 | `permissions` | нет | Список [разрешений](#разрешения). Без них плагин может только показывать команды, панели и уведомления. |
@@ -181,14 +181,17 @@ my-plugin/
 | Событие | Данные | Когда |
 |---|---|---|
 | `terminal.output` | `{ paneId, text }` | Вывод терминала (текст с escape-последовательностями цветов), пачками раз в ~50 мс. **Нужно `terminal.read`.** |
-| `session.connected` | `Session` | Сессия подключилась |
+| `session.connected` | `Session` | Сессия подключилась (приветствие сервера ещё может печататься) |
+| `session.ready` | `Session` | Вывод после входа затих (через 0,4 с тишины, не позже 5 с), скрипт подключения сервера уже отправлен. Отсюда безопасно печатать в терминал |
 | `session.closed` | `{ paneId }` | Сессия отключилась или закрыта |
 | `session.focus` | `Session` или `null` | Пользователь переключился на другую сессию (или на главный экран) |
+| `terminal.title` | `{ paneId, title }` | Программа в терминале сменила заголовок (OSC 0/2: tmux с `set-titles on`, шеллы с `PROMPT_COMMAND`…). **Нужно `terminal.read`.** |
 | `storage.changed` | `{ key }` | Другая страница этого плагина изменила его данные |
+| `message` | `{ from, data }` | Другая страница этого плагина вызвала `termdock.post(data)`; `from` — `"main"` (фоновый код) или id панели |
 | `language` | `"ru"` / `"en"` | Сменился язык интерфейса |
 | `context` | объект | Сменился контекст панели |
 
-`Session` — это `{ paneId, serverId, serverName, host, port, username, status, focused }`. `paneId` — постоянный идентификатор панели терминала: его передают во все функции работы с сессией.
+`Session` — это `{ paneId, serverId, serverName, host, port, username, status, focused }`, а в `sessions.list()` и `sessions.active()` у плагинов с `terminal.read` ещё и `title` — заголовок терминала. `paneId` — постоянный идентификатор панели терминала: его передают во все функции работы с сессией.
 
 ### Команды
 
@@ -200,6 +203,34 @@ termdock.commands.register("deploy", async (ctx) => {
 
 Если обработчик выбросит ошибку или вернёт отклонённый промис, TermDock покажет её пользователю.
 
+| Функция | |
+|---|---|
+| `commands.execute(id, контекст?)` | Запускает **свою** команду из любой страницы плагина, как если бы её выбрал пользователь, и возвращает то, что вернул обработчик. Чужие команды вызвать нельзя |
+| `commands.setState(id, состояние, { serverId }?)` | Меняет вид команды в меню и палитре: `{ title?, checked?, enabled? }`. `checked` рисует галочку, `enabled: false` прячет команду из палитры и делает пункт меню неактивным. С `serverId` состояние действует только для этого сервера (меню сервера, вкладки и сессии с ним) |
+
+```js
+// Переключатель с галочкой в меню сервера
+termdock.commands.register("autoOpen", async ({ serverId }) => {
+  const on = !(await termdock.storage.get("auto:" + serverId));
+  await termdock.storage.set("auto:" + serverId, on);
+  await termdock.commands.setState("autoOpen", { checked: on }, { serverId });
+});
+```
+
+### Связь между страницами плагина
+
+Фоновый код и каждая панель — отдельные изолированные страницы. Кроме общего `storage` они могут:
+
+- **вызывать команды плагина**: `await termdock.commands.execute("newChat", { paneId })` из панели выполнит обработчик в фоновом коде, так логику не приходится дублировать;
+- **обмениваться сообщениями**: `termdock.post(data)` доставляет `data` всем **остальным** страницам этого же плагина (событие `message`). Другие плагины их не получают.
+
+```js
+// В панели
+termdock.post({ type: "attached", paneId: termdock.context.paneId });
+// В фоновом коде
+termdock.on("message", ({ from, data }) => { if (data.type === "attached") attached.add(data.paneId); });
+```
+
 ### Интерфейс: termdock.ui
 
 | Функция | Результат |
@@ -209,6 +240,7 @@ termdock.commands.register("deploy", async (ctx) => {
 | `prompt(заголовок, подпись?, значение?)` | Строка или `null`, если отменили |
 | `openPanel(idПанели, paneId?)` | Открывает панель из plugin.json |
 | `closePanel()` | Закрывает панель, в которой выполняется код |
+| `notify(заголовок, текст?)` | Системное уведомление, когда окно TermDock не в фокусе (иначе обычное уведомление в окне). **Нужно `notifications`.** |
 
 К заголовкам уведомлений и диалогов TermDock добавляет название плагина: пользователь всегда видит, кто спрашивает.
 
@@ -218,6 +250,8 @@ termdock.commands.register("deploy", async (ctx) => {
 |---|---|---|
 | `sessions.list()` | — | Все открытые сессии (`Session[]`) |
 | `sessions.active()` | — | Активная сессия или `null` |
+| `sessions.open(serverId, { command?, split?, nearPaneId? }?)` | `sessions.open` ⚠ | Открывает подключение к сохранённому серверу: новой вкладкой или рядом с панелью `nearPaneId` (`split`: `"row"` — справа, `"column"` — снизу). Возвращает `paneId`. Пароли и ключ хоста пользователь подтверждает как обычно, плагин их не видит. `command` — своя команда вместо shell, нужно ещё `sessions.shell` |
+| `sessions.onBeforeShell(функция)` | `sessions.shell` ⚠ | Перед каждым подключением (и переподключением) спрашивает команду вместо shell, см. ниже |
 | `terminal.send(paneId, текст)` | `terminal.write` | Ввод в терминал, `"\r"` — Enter |
 
 ```js
@@ -225,6 +259,24 @@ termdock.commands.register("deploy", async (ctx) => {
 const s = await termdock.sessions.active();
 if (s) await termdock.terminal.send(s.paneId, "sudo systemctl restart nginx\r");
 ```
+
+### Своя команда вместо shell: sessions.onBeforeShell
+
+Печатать команду в терминал при подключении ненадёжно: ввод может уйти в приветствие сервера, в вопрос о смене пароля или смешаться со скриптом подключения. Надёжнее сразу запустить нужную программу вместо shell, как `ssh -t host 'tmux attach'`:
+
+```js
+// Только в фоновом коде. Нужно разрешение sessions.shell.
+termdock.sessions.onBeforeShell(async (s) => {
+  if (!(await termdock.storage.get("auto:" + s.serverId))) return null; // обычный shell
+  return "tmux new-session -A -s claude"; // или { command: "…" }
+});
+```
+
+- Функция получает `{ paneId, serverId, serverName, host, port, username }` и должна ответить за 2 секунды. Ответ `null` или пустая строка — обычный shell.
+- Если отвечают несколько плагинов, побеждает первый в списке установленных.
+- Команда выполняется на терминале сессии оболочкой входа пользователя. Когда она завершается (например, detach в tmux), сессия закрывается, `Enter` переподключает.
+- Скрипт подключения сервера в такой сессии **не запускается**: он попал бы внутрь вашей программы.
+- В терминале TermDock пишет, какой плагин что запускает.
 
 ### Команды на сервере: termdock.server.exec
 
@@ -235,7 +287,15 @@ const r = await termdock.server.exec(paneId, "df -h /", { timeout: 15000 });
 
 Нужно разрешение **`server.exec`**. Команда выполняется в отдельном канале SSH — в терминале её не видно, на ввод пользователя она не влияет. Таймаут по умолчанию 30 секунд (от 1 секунды до 10 минут), вывод — до 10 МБ. Сессия должна быть подключена.
 
-На сервере команда запускается через оболочку входа пользователя. Если она может быть `fish` или `csh`, оборачивайте сложные команды в `sh -c '…'`.
+На сервере команда запускается через оболочку входа пользователя (bash, zsh, fish, csh…), и у каждой свои правила кавычек. Чтобы не экранировать под все сразу, передавайте скрипт через **`stdin`** и запускайте `sh -s`: строку `sh -s` любой шелл понимает одинаково, а скрипт попадает прямо в `sh`.
+
+```js
+const dir = "/srv/my app's data"; // кавычки, $, ! и ` не страшны
+const q = (v) => "'" + v.replace(/'/g, "'\\''") + "'"; // экранирование по правилам POSIX
+const r = await termdock.server.exec(paneId, "sh -s", { stdin: `cd ${q(dir)} && ls -la` });
+```
+
+`stdin` — до 1 МБ текста.
 
 ### Файлы на сервере: termdock.files
 
@@ -288,6 +348,9 @@ const everything = await termdock.storage.all();
 | `servers.read` | Видеть список сохранённых серверов (без паролей) |
 | `clipboard.write` | Копировать в буфер обмена |
 | `openUrl` | Открывать ссылки в браузере |
+| `notifications` | `ui.notify` — системные уведомления |
+| `sessions.open` ⚠ | `sessions.open` — открывать подключения к сохранённым серверам |
+| `sessions.shell` ⚠ | `sessions.onBeforeShell` и `command` в `sessions.open` — запускать свою команду вместо shell |
 
 Без разрешений плагин всё равно может: добавлять команды, меню, горячие клавиши и панели, показывать уведомления и диалоги, видеть список открытых сессий и хранить свои данные.
 
@@ -310,11 +373,13 @@ const everything = await termdock.storage.all();
 |---|---|
 | Размер плагина | до 50 МБ и 2000 файлов |
 | Данные плагина (`storage`) | до 5 МБ |
-| `server.exec` | вывод до 10 МБ, таймаут от 1 с до 10 мин |
+| `server.exec` | вывод до 10 МБ, `stdin` до 1 МБ, таймаут от 1 с до 10 мин |
+| `termdock.post` | сообщение до 1 МБ (в JSON) |
+| `sessions.onBeforeShell` | ответ за 2 с, команда до 4096 символов |
 | `files.readText` | файлы до 5 МБ |
 | `terminal.output` | приходит пачками раз в ~50 мс, не больше 1 МБ на сессию за пачку |
 
-Даже с изоляцией плагин с разрешениями `terminal.write`, `server.exec` или `files.write` может сделать на сервере всё, что можете вы. Поэтому устанавливайте плагины только из источников, которым доверяете.
+Даже с изоляцией плагин с разрешениями `terminal.write`, `server.exec`, `files.write`, `sessions.open` или `sessions.shell` может сделать на сервере всё, что можете вы. Поэтому устанавливайте плагины только из источников, которым доверяете.
 
 ---
 
@@ -335,10 +400,11 @@ const everything = await termdock.storage.all();
 
 ## Примеры
 
-В папке [`examples/plugins`](../../examples/plugins) — три готовых плагина. Их можно установить и использовать как основу для своих:
+В папке [`examples/plugins`](../../examples/plugins) — четыре готовых плагина. Их можно установить и использовать как основу для своих:
 
 | Плагин | Что показывает |
 |---|---|
 | [hello-world](../../examples/plugins/hello-world) | Команды в меню, палитре и по горячей клавише, контекст команд, хранилище, окно-диалог |
 | [auto-reply](../../examples/plugins/auto-reply) | Чтение вывода терминала и ввод ответов, боковая панель с настройками, связь панели и фонового кода через `storage.changed` |
 | [server-info](../../examples/plugins/server-info) | Панель под терминалом, `server.exec`, чтение файла по SFTP |
+| [claude-tmux](../../examples/plugins/claude-tmux) | Своя команда вместо shell (`sessions.onBeforeShell`), `server.exec` со `stdin`, `main` из нескольких файлов, панель вызывает команды фона (`commands.execute`) и получает события `message`, переключатель с галочкой (`commands.setState`) |

@@ -92,7 +92,7 @@ my-plugin/
 | `name` | yes | Name. A string or `{ "ru": "…", "en": "…" }`. |
 | `version` | yes | Plugin version, e.g. `"1.2.0"`. |
 | `apiVersion` | yes | TermDock API version. Currently `1`. TermDock refuses plugins that need a newer one. |
-| `main` | no | Background code file, `main.js` by default. |
+| `main` | no | Background code file, `main.js` by default. May be a list, `["lib.js", "main.js"]`: the files load in order (handy for code shared by the background and panels). |
 | `description` | no | Description (string or `{ ru, en }`), shown in the plugin list and when installing. |
 | `author`, `homepage` | no | Author and a link. |
 | `permissions` | no | [Permissions](#permissions). Without any, a plugin can only show commands, panels and notifications. |
@@ -181,14 +181,17 @@ Returns a function that unsubscribes.
 | Event | Data | When |
 |---|---|---|
 | `terminal.output` | `{ paneId, text }` | Terminal output (text with colour escape sequences), in batches every ~50 ms. **Needs `terminal.read`.** |
-| `session.connected` | `Session` | A session connected |
+| `session.connected` | `Session` | A session connected (the server's welcome text may still be printing) |
+| `session.ready` | `Session` | The output after login has settled (0.4 s of quiet, at most 5 s) and the server's connect script has been sent. From here it's safe to type into the terminal |
 | `session.closed` | `{ paneId }` | A session disconnected or was closed |
 | `session.focus` | `Session` or `null` | The user switched to another session (or to the home screen) |
+| `terminal.title` | `{ paneId, title }` | A program in the terminal changed its title (OSC 0/2: tmux with `set-titles on`, shells with `PROMPT_COMMAND`…). **Needs `terminal.read`.** |
 | `storage.changed` | `{ key }` | Another page of this plugin changed its data |
+| `message` | `{ from, data }` | Another page of this plugin called `termdock.post(data)`; `from` is `"main"` (background code) or a panel id |
 | `language` | `"ru"` / `"en"` | The UI language changed |
 | `context` | object | The panel's context changed |
 
-`Session` is `{ paneId, serverId, serverName, host, port, username, status, focused }`. `paneId` is the stable id of a terminal pane: pass it to every session function.
+`Session` is `{ paneId, serverId, serverName, host, port, username, status, focused }`; in `sessions.list()` and `sessions.active()`, plugins with `terminal.read` also get `title`, the terminal title. `paneId` is the stable id of a terminal pane: pass it to every session function.
 
 ### Commands
 
@@ -200,6 +203,34 @@ termdock.commands.register("deploy", async (ctx) => {
 
 If the handler throws or returns a rejected promise, TermDock shows the error to the user.
 
+| Function | |
+|---|---|
+| `commands.execute(id, context?)` | Runs one of **this plugin's own** commands from any of its pages, as if the user picked it, and returns what the handler returned. Other plugins' commands can't be run |
+| `commands.setState(id, state, { serverId }?)` | Changes how a command shows in menus and the palette: `{ title?, checked?, enabled? }`. `checked` draws a check mark; `enabled: false` hides the command from the palette and greys out its menu item. With `serverId` the state applies to that server only (its server, tab and session menus) |
+
+```js
+// A toggle with a check mark in the server menu
+termdock.commands.register("autoOpen", async ({ serverId }) => {
+  const on = !(await termdock.storage.get("auto:" + serverId));
+  await termdock.storage.set("auto:" + serverId, on);
+  await termdock.commands.setState("autoOpen", { checked: on }, { serverId });
+});
+```
+
+### Talking between a plugin's pages
+
+The background code and each panel are separate isolated pages. Besides the shared `storage`, they can:
+
+- **run the plugin's commands**: `await termdock.commands.execute("newChat", { paneId })` from a panel runs the handler in the background code, so the logic isn't duplicated;
+- **send messages**: `termdock.post(data)` delivers `data` to all **other** pages of the same plugin (the `message` event). Other plugins never get them.
+
+```js
+// In a panel
+termdock.post({ type: "attached", paneId: termdock.context.paneId });
+// In the background code
+termdock.on("message", ({ from, data }) => { if (data.type === "attached") attached.add(data.paneId); });
+```
+
 ### UI: termdock.ui
 
 | Function | Result |
@@ -209,6 +240,7 @@ If the handler throws or returns a rejected promise, TermDock shows the error to
 | `prompt(title, label?, value?)` | A string, or `null` when cancelled |
 | `openPanel(panelId, paneId?)` | Opens a panel from plugin.json |
 | `closePanel()` | Closes the panel the code runs in |
+| `notify(title, text?)` | A system notification while the TermDock window isn't focused (an in-app toast otherwise). **Needs `notifications`.** |
 
 TermDock prefixes notifications and dialog titles with the plugin's name, so the user always sees who is asking.
 
@@ -218,6 +250,8 @@ TermDock prefixes notifications and dialog titles with the plugin's name, so the
 |---|---|---|
 | `sessions.list()` | — | All open sessions (`Session[]`) |
 | `sessions.active()` | — | The focused session or `null` |
+| `sessions.open(serverId, { command?, split?, nearPaneId? }?)` | `sessions.open` ⚠ | Opens a connection to a saved server, in a new tab or next to the `nearPaneId` pane (`split`: `"row"` to the right, `"column"` below). Returns the `paneId`. The user confirms passwords and host keys as usual; the plugin never sees them. `command` runs instead of the shell and also needs `sessions.shell` |
+| `sessions.onBeforeShell(fn)` | `sessions.shell` ⚠ | Before every connection (and reconnect), asks for a command to run instead of the shell, see below |
 | `terminal.send(paneId, text)` | `terminal.write` | Types into the terminal, `"\r"` is Enter |
 
 ```js
@@ -225,6 +259,24 @@ TermDock prefixes notifications and dialog titles with the plugin's name, so the
 const s = await termdock.sessions.active();
 if (s) await termdock.terminal.send(s.paneId, "sudo systemctl restart nginx\r");
 ```
+
+### Your own command instead of the shell: sessions.onBeforeShell
+
+Typing a command into the terminal on connect is fragile: the input may land in the server's welcome text or a password-change prompt, or mix with the connect script. It's more reliable to start your program instead of the shell, like `ssh -t host 'tmux attach'`:
+
+```js
+// Background code only. Needs the sessions.shell permission.
+termdock.sessions.onBeforeShell(async (s) => {
+  if (!(await termdock.storage.get("auto:" + s.serverId))) return null; // the usual shell
+  return "tmux new-session -A -s claude"; // or { command: "…" }
+});
+```
+
+- The function gets `{ paneId, serverId, serverName, host, port, username }` and must answer within 2 seconds. `null` or an empty string means the usual shell.
+- If several plugins answer, the first one in the installed list wins.
+- The command runs on the session's terminal through the user's login shell. When it exits (for example, a tmux detach), the session closes; `Enter` reconnects.
+- The server's connect script **doesn't run** in such a session: it would end up inside your program.
+- TermDock prints in the terminal which plugin runs what.
 
 ### Commands on the server: termdock.server.exec
 
@@ -235,7 +287,15 @@ const r = await termdock.server.exec(paneId, "df -h /", { timeout: 15000 });
 
 Needs **`server.exec`**. The command runs on a separate SSH channel: it doesn't show up in the terminal and doesn't interfere with the user's typing. The timeout is 30 seconds by default (1 second to 10 minutes), output up to 10 MB. The session must be connected.
 
-The server runs the command through the user's login shell. If that may be `fish` or `csh`, wrap complex commands in `sh -c '…'`.
+The server runs the command through the user's login shell (bash, zsh, fish, csh…), each with its own quoting rules. To avoid escaping for all of them, pass the script through **`stdin`** and run `sh -s`: every shell reads `sh -s` the same way, and the script goes straight to `sh`.
+
+```js
+const dir = "/srv/my app's data"; // quotes, $, ! and ` are fine
+const q = (v) => "'" + v.replace(/'/g, "'\\''") + "'"; // POSIX quoting
+const r = await termdock.server.exec(paneId, "sh -s", { stdin: `cd ${q(dir)} && ls -la` });
+```
+
+`stdin` takes up to 1 MB of text.
 
 ### Files on the server: termdock.files
 
@@ -288,6 +348,9 @@ A plugin lists the permissions it needs in `permissions`. When installing, TermD
 | `servers.read` | Seeing the list of saved servers (no passwords) |
 | `clipboard.write` | Copying to the clipboard |
 | `openUrl` | Opening links in the browser |
+| `notifications` | `ui.notify`: system notifications |
+| `sessions.open` ⚠ | `sessions.open`: opening connections to saved servers |
+| `sessions.shell` ⚠ | `sessions.onBeforeShell` and `command` in `sessions.open`: running its own command instead of the shell |
 
 Without any permission a plugin can still add commands, menus, hotkeys and panels, show notifications and dialogs, see the list of open sessions and keep its own data.
 
@@ -310,11 +373,13 @@ Limits:
 |---|---|
 | Plugin size | up to 50 MB and 2000 files |
 | Plugin data (`storage`) | up to 5 MB |
-| `server.exec` | output up to 10 MB, timeout 1 s to 10 min |
+| `server.exec` | output up to 10 MB, `stdin` up to 1 MB, timeout 1 s to 10 min |
+| `termdock.post` | messages up to 1 MB (as JSON) |
+| `sessions.onBeforeShell` | answer within 2 s, command up to 4096 characters |
 | `files.readText` | files up to 5 MB |
 | `terminal.output` | batched every ~50 ms, at most 1 MB per session per batch |
 
-Even isolated, a plugin with `terminal.write`, `server.exec` or `files.write` can do anything on a server that you can. Install plugins only from sources you trust.
+Even isolated, a plugin with `terminal.write`, `server.exec`, `files.write`, `sessions.open` or `sessions.shell` can do anything on a server that you can. Install plugins only from sources you trust.
 
 ---
 
@@ -335,10 +400,11 @@ Zip the plugin folder (plugin.json may sit at the root of the archive or in one 
 
 ## Examples
 
-[`examples/plugins`](../../examples/plugins) has three ready plugins. Install them, or use them as a starting point:
+[`examples/plugins`](../../examples/plugins) has four ready plugins. Install them, or use them as a starting point:
 
 | Plugin | Shows |
 |---|---|
 | [hello-world](../../examples/plugins/hello-world) | Commands in menus, the palette and on a hotkey, command context, storage, a dialog panel |
 | [auto-reply](../../examples/plugins/auto-reply) | Reading terminal output and typing replies, a sidebar settings panel, a panel and background code talking through `storage.changed` |
 | [server-info](../../examples/plugins/server-info) | A panel under the terminal, `server.exec`, reading a file over SFTP |
+| [claude-tmux](../../examples/plugins/claude-tmux) | Its own command instead of the shell (`sessions.onBeforeShell`), `server.exec` with `stdin`, `main` as a list of files, a panel running background commands (`commands.execute`) and getting `message` events, a toggle with a check mark (`commands.setState`) |

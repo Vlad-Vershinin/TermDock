@@ -16,7 +16,10 @@ declare namespace TermDock {
     | "files.write"
     | "servers.read"
     | "clipboard.write"
-    | "openUrl";
+    | "openUrl"
+    | "notifications"
+    | "sessions.open"
+    | "sessions.shell";
 
   /** An open terminal pane (one SSH session). */
   interface Session {
@@ -30,6 +33,27 @@ declare namespace TermDock {
     status: "connecting" | "connected" | "closed" | "error";
     /** The pane has keyboard focus in the visible tab. */
     focused: boolean;
+    /** Terminal title (OSC 0/2); sessions.list / sessions.active, plugins with terminal.read only. */
+    title?: string;
+  }
+
+  /** What `sessions.onBeforeShell` gets: the session about to open. */
+  interface ShellTarget {
+    paneId: string;
+    serverId: string;
+    serverName: string;
+    host: string;
+    port: number;
+    username: string;
+  }
+
+  /** How a command shows in menus and the palette (`commands.setState`). */
+  interface CommandState {
+    title?: LText;
+    /** Draws a check mark (true) or an empty slot (false) instead of the plugin icon. */
+    checked?: boolean;
+    /** false: hidden from the palette, greyed out in menus. */
+    enabled?: boolean;
   }
 
   /** What a command receives, depending on where it was run from. */
@@ -79,6 +103,12 @@ declare namespace TermDock {
     /** Terminal output (UTF-8 text with escape sequences), batched ~50 ms. Needs terminal.read. */
     "terminal.output": { paneId: string; text: string };
     "session.connected": Session;
+    /** Login output has settled and the connect script was sent: safe to type into the terminal. */
+    "session.ready": Session;
+    /** A program set the terminal title (OSC 0/2). Needs terminal.read. */
+    "terminal.title": { paneId: string; title: string };
+    /** Another page of this plugin called `termdock.post`; from = "main" or a panel id. */
+    "message": { from: string; data: unknown };
     "session.closed": { paneId: string };
     /** The focused session changed (null: the home screen). */
     "session.focus": Session | null;
@@ -104,7 +134,14 @@ declare namespace TermDock {
     commands: {
       /** Handles a command declared in plugin.json. Returning a rejected promise shows the error to the user. */
       register(id: string, handler: (context: CommandContext) => unknown): () => void;
+      /** Runs one of this plugin's own commands (from any of its pages); resolves with the handler's result. */
+      execute(id: string, context?: CommandContext): Promise<unknown>;
+      /** Changes how the command shows; with `serverId`, for that server only. */
+      setState(id: string, state: CommandState, options?: { serverId?: string }): Promise<void>;
     };
+
+    /** Sends data to this plugin's other pages (their "message" event). JSON up to 1 MB. */
+    post(data: unknown): Promise<void>;
 
     ui: {
       toast(message: string, kind?: "info" | "success" | "error"): Promise<void>;
@@ -115,12 +152,25 @@ declare namespace TermDock {
       openPanel(panelId: string, paneId?: string): Promise<void>;
       /** Closes the panel this code runs in. */
       closePanel(): Promise<void>;
+      /** A system notification while TermDock is in the background, a toast otherwise. Needs notifications. */
+      notify(title: string, body?: string): Promise<void>;
     };
 
     sessions: {
       list(): Promise<Session[]>;
       /** The focused session, or null. */
       active(): Promise<Session | null>;
+      /**
+       * Opens a connection to a saved server: a new tab, or `split` next to `nearPaneId` (default: the
+       * focused pane). Resolves with the new paneId. Needs sessions.open; `command` also needs sessions.shell.
+       */
+      open(serverId: string, options?: { command?: string; split?: "row" | "column"; nearPaneId?: string }): Promise<string>;
+      /**
+       * Before every connection and reconnect: return a command to run instead of the login shell
+       * (a string or { command }), or null for the usual shell. Answer within 2 s. Background code
+       * only; needs sessions.shell. The connect script doesn't run in such sessions.
+       */
+      onBeforeShell(fn: (target: ShellTarget) => string | { command: string } | null | undefined | Promise<string | { command: string } | null | undefined>): () => void;
     };
 
     terminal: {
@@ -132,8 +182,10 @@ declare namespace TermDock {
       /**
        * Runs a command on the server over a separate channel, not in the terminal. Output is limited
        * to 10 MB, `timeout` (ms) to 1 s…10 min, 30 s by default. Needs server.exec.
+       * `stdin` (up to 1 MB) is written to the command: `exec(id, "sh -s", { stdin: script })` runs a
+       * POSIX script without the login shell (fish, csh…) parsing it first.
        */
-      exec(paneId: string, command: string, options?: { timeout?: number }): Promise<ExecResult>;
+      exec(paneId: string, command: string, options?: { timeout?: number; stdin?: string }): Promise<ExecResult>;
     };
 
     files: {
