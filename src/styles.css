@@ -493,7 +493,7 @@ code.fingerprint { display: block; padding: 10px; border-radius: 6px; background
 .modal.settings { width: 760px; height: min(600px, calc(100vh - 40px)); padding: 0; flex-direction: row; gap: 0; overflow: hidden; }
 .settings-nav { flex: none; width: 190px; display: flex; flex-direction: column; gap: 2px; padding: 18px 10px 14px; background: var(--bg); border-right: 1px solid var(--line); }
 .settings-nav h3 { margin: 0 8px 12px; }
-.settings-nav-item { display: flex; align-items: center; gap: 9px; height: 32px; padding: 0 10px; border: none; border-radius: var(--radius); background: transparent; color: var(--muted); cursor: pointer; text-align: left; }
+.settings-nav-item { display: flex; align-items: center; gap: 9px; min-height: 32px; padding: 6px 10px; line-height: 1.25; border: none; border-radius: var(--radius); background: transparent; color: var(--muted); cursor: pointer; text-align: left; }
 .settings-nav-item:hover { background: var(--bg-2); color: var(--text); }
 .settings-nav-item.on { background: var(--accent-soft); color: #fff; }
 .settings-reset { align-self: flex-start; margin: 0 4px; }
@@ -507,3 +507,5 @@ code.fingerprint { display: block; padding: 10px; border-radius: 6px; background
   .settings-nav { width: 150px; }
 }
 .palette-nocheck { display: inline-block; width: 13px; flex: none; }
+.settings-nav-dot { width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: var(--accent); flex: none; }
+.server-dialog .settings-body > p.hint { margin: 0; }

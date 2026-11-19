@@ -449,6 +449,7 @@ export const ru = {
   "server.hostPlaceholder": "192.168.1.10 или user@example.com:2222",
   "server.fromConfigAddr": "Из ~/.ssh/config: адрес {addr}",
   "server.user": "Пользователь",
+  "server.sectionMain": "Подключение",
   "server.folder": "Папка",
   "server.privateKey": "Приватный ключ",
   "server.browse": "Обзор…",

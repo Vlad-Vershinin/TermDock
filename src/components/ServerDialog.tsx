@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, AuthMethod, configJumpText, errorText, Forward, Jump, Server, SshConfigInfo } from "../lib/api";
 import { pickFolder as pickLocalFolder, useSettings } from "../lib/settings";
 import { useUi } from "../lib/ui";
 import { useScripts } from "./Scripts";
 import { ForwardFields, forwardText, KIND_HINTS, newForward } from "./Ports";
-import { IClose, IPlus } from "./Icons";
+import { IClose, ICopyServer, ILink, IPlus, IScript, IServer, ISettings } from "./Icons";
 import { Key, useT } from "../lib/i18n";
 
 export const COLORS = ["#58a6ff", "#3fb950", "#d29922", "#ff7b72", "#bc8cff", "#39c5cf", "#f778ba", "#8b949e"];
@@ -40,6 +40,16 @@ function goesThrough(s: Server, id: string, all: Server[], depth = 0): boolean {
   return !!via && depth < 10 && goesThrough(via, id, all, depth + 1);
 }
 
+type ServerSection = "main" | "jump" | "script" | "forwards" | "advanced";
+/** `nav`: a shorter name for the list on the left. */
+const SERVER_SECTIONS: { id: ServerSection; label: Key; nav?: Key; icon: ReactNode }[] = [
+  { id: "main", label: "server.sectionMain", icon: <IServer size={15} /> },
+  { id: "jump", label: "server.jumpSection", nav: "server.jumpServer", icon: <ICopyServer size={15} /> },
+  { id: "script", label: "server.connectScript", icon: <IScript size={15} /> },
+  { id: "forwards", label: "ports.title", icon: <ILink size={15} /> },
+  { id: "advanced", label: "server.advanced", icon: <ISettings size={15} /> },
+];
+
 export function ServerDialog({ server, servers, folders, folder, onClose, onSaved }: Props) {
   const ui = useUi();
   const tr = useT();
@@ -54,7 +64,7 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
   const [jumpSecret, setJumpSecret] = useState("");
   const [jumpForget, setJumpForget] = useState(false);
   const [extraFolders, setExtraFolders] = useState<string[]>([]);
-  const [jumpOpen] = useState(jumpMode !== "none");
+  const [section, setSection] = useState<ServerSection>("main");
   const set = <K extends keyof Server>(k: K, v: Server[K]) => setS((x) => ({ ...x, [k]: v }));
   // What ~/.ssh/config says about the typed host (HostName / ProxyJump hints).
   const [sshCfg, setSshCfg] = useState<SshConfigInfo | null>(null);
@@ -100,10 +110,15 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
   };
 
   const save = async (connect: boolean) => {
-    if (jumpMode === "saved" && !jump.serverId) return ui.toast(tr("server.chooseJump"), "error");
-    if (jumpMode === "custom" && !jump.host.trim()) return ui.toast(tr("server.jumpHostRequired"), "error");
+    // A problem in another section: show that section along with the message.
+    const fail = (where: ServerSection, text: string) => {
+      setSection(where);
+      ui.toast(text, "error");
+    };
+    if (jumpMode === "saved" && !jump.serverId) return fail("jump", tr("server.chooseJump"));
+    if (jumpMode === "custom" && !jump.host.trim()) return fail("jump", tr("server.jumpHostRequired"));
     const badFw = (s.forwards ?? []).find((f) => (f.kind !== "remote" && !f.bindPort) || (f.kind !== "dynamic" && (!f.destHost.trim() || !f.destPort)));
-    if (badFw) return ui.toast(tr("server.badForward", { fw: forwardText(badFw) }), "error");
+    if (badFw) return fail("forwards", tr("server.badForward", { fw: forwardText(badFw) }));
     setBusy(true);
     try {
       const p = parseHost(s);
@@ -129,17 +144,8 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
 
   const isKey = s.auth === "key";
 
-  return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form
-        className="modal modal-wide"
-        onSubmit={(e) => {
-          e.preventDefault();
-          save(false);
-        }}
-        onKeyDown={(e) => e.key === "Escape" && onClose()}
-      >
-        <h3>{server?.id ? tr("server.editTitle") : tr("session.newServer")}</h3>
+  const mainSection = (
+    <>
         <div className="grid2">
           <label className="field span2">
             <span>{tr("server.host")}</span>
@@ -212,12 +218,10 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
             <p className="hint">{tr("server.keychainNote")}</p>
           </>
         )}
-
-        <details open={jumpOpen}>
-          <summary>
-            {tr("server.jumpSection")}
-            {jumpMode !== "none" ? ` — ${tr("server.enabled")}` : ""}
-          </summary>
+    </>
+  );
+  const jumpSection = (
+    <>
           <p className="hint">{tr("server.jumpHint")}</p>
           {sshCfg?.error && <p className="hint err">~/.ssh/config: {sshCfg.error}</p>}
           {sshCfg && sshCfg.jumps.length > 0 && (
@@ -266,13 +270,10 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
               setForget={setJumpForget}
             />
           )}
-        </details>
-
-        <details open={!!server?.connectScript}>
-          <summary>
-            {tr("server.connectScript")}
-            {s.connectScript ? ` — ${tr("server.on")}` : ""}
-          </summary>
+    </>
+  );
+  const scriptSection = (
+    <>
           <label className="field">
             <span>{tr("server.connectScriptRun")}</span>
             <select value={s.connectScript ?? ""} onChange={(e) => set("connectScript", e.target.value || null)}>
@@ -293,13 +294,10 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
             </button>
             .
           </p>
-        </details>
-
-        <details open={!!server?.forwards?.length}>
-          <summary>
-            {tr("ports.title")}
-            {s.forwards?.length ? ` — ${tr("server.fwCount", { on: s.forwards.filter((f) => f.enabled).length, n: s.forwards.length })}` : ""}
-          </summary>
+    </>
+  );
+  const forwardsSection = (
+    <>
           <p className="hint">
             {tr("server.fwHint")} {tr(KIND_HINTS.local)} {tr(KIND_HINTS.remote)} {tr(KIND_HINTS.dynamic)}
           </p>
@@ -320,10 +318,10 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
           <button type="button" className="link-btn fw-add-btn" onClick={() => set("forwards", [...(s.forwards ?? []), newForward()])}>
             <IPlus size={12} /> {tr("server.fwAdd")}
           </button>
-        </details>
-
-        <details>
-          <summary>{tr("server.advanced")}</summary>
+    </>
+  );
+  const advancedSection = (
+    <>
           <label className="field">
             <span>{tr("server.remoteDir")}</span>
             <input value={s.remoteDir ?? ""} onChange={(e) => set("remoteDir", e.target.value)} placeholder={tr("server.homeDir")} spellCheck={false} />
@@ -358,9 +356,47 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
               ))}
             </div>
           </div>
-        </details>
+    </>
+  );
 
-        <div className="modal-actions">
+  const content = { main: mainSection, jump: jumpSection, script: scriptSection, forwards: forwardsSection, advanced: advancedSection }[section];
+  // A dot next to sections that have something set up.
+  const configured: Record<ServerSection, boolean> = {
+    main: false,
+    jump: jumpMode !== "none",
+    script: !!s.connectScript,
+    forwards: !!s.forwards?.length,
+    advanced: !!(s.remoteDir || s.downloadDir),
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <form
+        className="modal settings server-dialog"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save(false);
+        }}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+      >
+        <nav className="settings-nav">
+          <h3>{server?.id ? tr("server.editTitle") : tr("session.newServer")}</h3>
+          {SERVER_SECTIONS.map((x) => (
+            <button type="button" key={x.id} className={`settings-nav-item ${x.id === section ? "on" : ""}`} onClick={() => setSection(x.id)}>
+              {x.icon}
+              {tr(x.nav ?? x.label)}
+              {configured[x.id] && <span className="settings-nav-dot" />}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-main">
+          <div className="settings-head">
+            <h4>{tr(SERVER_SECTIONS.find((x) => x.id === section)!.label)}</h4>
+          </div>
+          <div className="settings-body" key={section}>
+            {content}
+          </div>
+          <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>
             {tr("common.cancel")}
           </button>
@@ -370,6 +406,7 @@ export function ServerDialog({ server, servers, folders, folder, onClose, onSave
           <button type="button" className="btn btn-primary" disabled={busy || !s.host.trim()} onClick={() => save(true)}>
             {tr("server.saveConnect")}
           </button>
+        </div>
         </div>
       </form>
     </div>

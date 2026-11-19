@@ -450,6 +450,7 @@ export const en: Dict = {
   "server.hostPlaceholder": "192.168.1.10 or user@example.com:2222",
   "server.fromConfigAddr": "From ~/.ssh/config: address {addr}",
   "server.user": "User",
+  "server.sectionMain": "Connection",
   "server.folder": "Folder",
   "server.privateKey": "Private key",
   "server.browse": "Browse…",
