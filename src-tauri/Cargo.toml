@@ -1,6 +1,6 @@
 [package]
 name = "termdock"
-version = "1.4.2"
+version = "1.4.3"
 description = "TermDock — SSH terminal & file manager"
 edition = "2021"
 
