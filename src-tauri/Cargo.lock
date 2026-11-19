@@ -5884,12 +5884,14 @@ name = "termdock"
 version = "1.4.2"
 dependencies = [
  "anyhow",
+ "arboard",
  "async-trait",
  "chardetng",
  "dirs 6.0.0",
  "encoding_rs",
  "gtk",
  "keyring",
+ "png",
  "reqwest",
  "russh",
  "russh-sftp",

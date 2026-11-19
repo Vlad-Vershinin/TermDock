@@ -1,6 +1,7 @@
 #[macro_use]
 mod i18n;
 
+mod clipboard;
 mod dragout;
 mod files;
 mod plugins;
@@ -818,6 +819,7 @@ pub fn run() {
             copy_between,
             cancel_transfer,
             dragout::drag_temp_dir,
+            clipboard::clipboard_paths,
             dragout::mouse_button_held,
         ])
         .run(tauri::generate_context!())

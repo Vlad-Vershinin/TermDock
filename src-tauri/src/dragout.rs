@@ -12,12 +12,17 @@ fn root() -> PathBuf {
     std::env::temp_dir().join("TermDock-drag")
 }
 
+/// A fresh temp folder that `cleanup_old` removes after a day.
+pub fn new_temp_dir() -> Result<PathBuf, String> {
+    let dir = root().join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
 /// Creates a fresh per-drag temp folder and returns its path.
 #[tauri::command]
 pub fn drag_temp_dir() -> Result<String, String> {
-    let dir = root().join(uuid::Uuid::new_v4().to_string());
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.to_string_lossy().into_owned())
+    Ok(new_temp_dir()?.to_string_lossy().into_owned())
 }
 
 /// Removes per-drag folders older than a day. The file manager has long finished copying them.
