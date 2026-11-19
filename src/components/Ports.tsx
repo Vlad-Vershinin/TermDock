@@ -32,7 +32,7 @@ export function ForwardFields({ f, onChange }: { f: Forward; onChange: (f: Forwa
   const set = <K extends keyof Forward>(k: K, v: Forward[K]) => onChange({ ...f, [k]: v });
   return (
     <div className="fw-fields">
-      <label className="field">
+      <label className="field fw-type">
         <span>{tr("ports.type")}</span>
         <select value={f.kind} onChange={(e) => set("kind", e.target.value as ForwardKind)}>
           {(Object.keys(KIND_LABELS) as ForwardKind[]).map((k) => (

@@ -288,8 +288,13 @@ span.telemetry { cursor: default; }
 .fw-status { font-size: calc(11px * var(--fs)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fw-count { margin-left: 2px; padding: 0 5px; border-radius: 8px; background: var(--bg-3); font-size: calc(10px * var(--fs)); font-variant-numeric: tabular-nums; }
 .fw-failed { color: var(--warn); }
-.fw-fields { display: grid; grid-template-columns: 1.2fr 1fr .7fr 1fr .7fr; gap: 8px; align-items: end; }
+/* Type on its own row, then "address + port" pairs; minmax(0, …) lets the fields shrink instead of overflowing. */
+.fw-fields { display: grid; grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr) 90px; gap: 8px; align-items: end; }
+.fw-fields .fw-type { grid-column: 1 / -1; }
+.fw-fields .field > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fw-fields .fw-span { grid-column: span 2; margin: 0 0 6px; }
+.fw-pop .fw-fields { grid-template-columns: minmax(0, 1fr) 90px; }
+.fw-pop .fw-fields .fw-span { grid-column: 1 / -1; }
 .fw-add { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border-2); }
 .fw-actions { justify-content: flex-end; gap: 8px; }
 .fw-add-btn { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; }
@@ -405,6 +410,8 @@ td.mode { font-family: ui-monospace, Consolas, monospace; font-size: calc(11px *
 .field input { height: 30px; padding: 0 10px; border-radius: var(--radius); border: 1px solid var(--border-2); background: var(--bg-input); outline: none; min-width: 0; }
 .field select { height: 30px; padding: 0 8px; border-radius: var(--radius); border: 1px solid var(--border-2); background: var(--bg-input); outline: none; min-width: 0; }
 .field input:focus, .field select:focus, .code-input:focus { border-color: var(--accent); }
+/* A field's own input keeps its height even inside a .row (whose "input { flex: 1 }" is meant for row layouts). */
+.field > input, .field > select, .row .field > input { flex: none; }
 .field input:disabled { opacity: .5; }
 .code-input { width: 100%; resize: vertical; min-height: 160px; padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--border-2); background: var(--bg-input); outline: none; font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace; font-size: calc(12.5px * var(--fs)); line-height: 1.5; white-space: pre; tab-size: 2; }
 .row { display: flex; gap: 6px; }
