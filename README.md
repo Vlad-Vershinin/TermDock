@@ -104,6 +104,7 @@ Below the terminal there are two panes: **"This computer"** and the **server**. 
   - The editor keeps indentation, line endings and file permissions, and won't let you close a file without saving.
 - **Right-click** a file for every action: download, rename, delete, copy path, new file or folder.
 - The **"cd here"** button moves the terminal to the folder open in the file pane.
+- **Paste from the clipboard**: copy files in your file manager or take a screenshot, then press `Ctrl+V` in the server pane (or right-click → "Paste from clipboard"): they're uploaded into the open folder. In the terminal, `Ctrl+Shift+V` (or right-click) does the same and types the uploaded file's path, which is handy for showing a screenshot to Claude Code or another program on the server. Text is pasted as text, as before.
 
 ### ⚡ Run saved commands in one click
 
@@ -224,7 +225,9 @@ The most useful ones: `Ctrl+Shift+K` to find a server, `Ctrl+Shift+N` for a new 
 | `Alt+←/→/↑/↓` | Move between panes in a tab |
 | `Alt+1` / `Alt+2` | Show / hide the server / script panel |
 | `Ctrl+Shift+Enter` | Next script command in step-by-step mode |
-| `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste in the terminal |
+| `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste in the terminal (files and screenshots are uploaded to the server) |
+| `Ctrl+C` with text selected | Copy (without a selection it interrupts the command, as usual) |
+| `Shift` + drag in the terminal | Select text when a program uses the mouse (tmux, mc, htop…) |
 | Right-click in the terminal | Copy the selection or paste |
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Larger / smaller / default terminal font |
 | `Enter` in a disconnected terminal | Reconnect |
