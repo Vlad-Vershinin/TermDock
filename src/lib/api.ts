@@ -286,6 +286,8 @@ export const api = {
   cancelTransfer: (transferId: string) => invoke<void>("cancel_transfer", { transferId }),
 
   // ---- plugins ----
+  /** Files copied in the OS file manager; with imageName, else a clipboard image saved as a temp PNG. */
+  clipboardPaths: (imageName: string | null) => invoke<string[]>("clipboard_paths", { imageName }),
   updateCheck: () => invoke<UpdateInfo>("update_check"),
   /** Downloads, verifies and installs the latest release; the app restarts on success. */
   updateInstall: (onProgress: (p: UpdateProgress) => void) => {

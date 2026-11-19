@@ -7,6 +7,7 @@ import { remotePaneRegistry } from "../lib/sessions";
 import { pickFolder, useSettings } from "../lib/settings";
 import { dragOutLocal, dragOutRemote } from "../lib/dragout";
 import { baseName, formatDate, formatMode, formatSize, joinPath, parentPath } from "../lib/paths";
+import { clipboardFiles } from "../lib/clipboardFiles";
 import { useTransfers } from "../lib/transfers";
 import { MenuItem, useUi } from "../lib/ui";
 import { usePlugins } from "../lib/plugins/host";
@@ -278,6 +279,17 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
 
   const selectedPaths = (p: Pane) => p.entries.filter((e) => p.selected.has(e.path)).map((e) => e.path);
 
+  // Screenshots and files copied in the file manager go straight to the open server folder.
+  const pasteFromClipboard = async () => {
+    try {
+      const files = await clipboardFiles();
+      if (!files.length) return ui.toast(tr("files.clipboardNoFiles"));
+      await upload(files);
+    } catch (e) {
+      ui.toast(errorText(e), "error");
+    }
+  };
+
   const pickAndUpload = async () => {
     const files = await openDialog({ multiple: true, title: tr("files.pickUpload") });
     if (files) upload(Array.isArray(files) ? files : [files]);
@@ -319,6 +331,7 @@ export function FilePanel({ tabId, server, sessionId, onRemoteDir, onCd }: Panel
           },
         ]}
         onCd={onCd}
+        onPaste={sessionId ? pasteFromClipboard : undefined}
         extraMenu={sessionId ? copyMenu : undefined}
         extra={
           <>
@@ -349,11 +362,13 @@ interface PaneProps {
   onCd?: (dir: string) => void;
   /** Extra context-menu items for the selected paths (server-to-server copy). */
   extraMenu?: (paths: string[]) => MenuItem[];
+  /** Ctrl+V / "Paste from clipboard": upload copied files or a screenshot into this folder. */
+  onPaste?: () => void;
   /** Rows dragged out of the window, into the OS file manager. */
   onDragOut?: (paths: string[]) => void;
 }
 
-function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onOpenFile, transfer, onCd, extraMenu, onDragOut }: PaneProps) {
+function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onOpenFile, transfer, onCd, extraMenu, onDragOut, onPaste }: PaneProps) {
   const ui = useUi();
   const plugins = usePlugins();
   const tr = useT();
@@ -438,6 +453,7 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
   const dirMenu = (): MenuItem[] => {
     const ok = pane.dir !== null && pane.dir !== "" && !disabledText;
     return [
+      ...(onPaste ? [{ label: tr("files.pasteClipboard"), icon: <IUpload size={13} />, hint: "Ctrl+V", disabled: !ok, onClick: onPaste }, "-" as const] : []),
       { label: tr("files.newFileMenu"), icon: <IFilePlus size={13} />, disabled: !ok, onClick: newFile },
       { label: tr("sidebar.newFolderMenu"), icon: <IFolderPlus size={13} />, disabled: !ok, onClick: mkdir },
       "-",
@@ -517,6 +533,7 @@ function FilePane({ pane, tabId, title, accept, disabledText, extra, onDrop, onO
     else if (e.key === "F4") edit();
     else if (e.key === "F5") pane.refresh();
     else if (e.key === "a" && (e.ctrlKey || e.metaKey)) pane.setSelected(new Set(pane.entries.map((x) => x.path)));
+    else if (e.code === "KeyV" && (e.ctrlKey || e.metaKey) && onPaste && pane.dir && !disabledText) onPaste();
     else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       const ids = pane.entries.map((x) => x.path);
       const cur = anchor.current ? ids.indexOf(anchor.current) : -1;

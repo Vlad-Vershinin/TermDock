@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "../lib/open";
 import "@xterm/xterm/css/xterm.css";
 import { api, configJumpText, errorText, Server } from "../lib/api";
@@ -20,6 +20,11 @@ import { Telemetry } from "./Telemetry";
 import { Ports } from "./Ports";
 import { PluginPanelFrame, usePlugins } from "../lib/plugins/host";
 import { ltext } from "../lib/plugins/types";
+import { readPaste, shellQuote } from "../lib/clipboardFiles";
+import { baseName, joinPath } from "../lib/paths";
+
+/** The Shift+drag hint is shown once per app run. */
+let shiftHintShown = false;
 
 const MOUSE_OFF = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l";
 
@@ -380,8 +385,14 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         if (sel) writeText(sel);
         return false;
       }
+      // Ctrl+C with a selection copies it (like Windows Terminal); without one it is still ^C.
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyC" && t.hasSelection()) {
+        writeText(t.getSelection());
+        t.clearSelection();
+        return false;
+      }
       if (mod && e.shiftKey && e.code === "KeyV") {
-        readText().then((txt) => txt && t.paste(txt));
+        pasteRef.current();
         return false;
       }
       if (mod && !e.shiftKey && (e.key === "=" || e.key === "+")) return setFont(settingsRef.current.termFontSize + 1), false;
@@ -404,8 +415,31 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
       if (sel) {
         writeText(sel);
         t.clearSelection();
-      } else readText().then((txt) => txt && t.paste(txt));
+      } else pasteRef.current();
     };
+
+    // OSC 52: a program on the server copies text to our clipboard (tmux with the mouse on,
+    // editors, Claude Code…). Only writing is supported: the server never reads the clipboard.
+    t.parser.registerOscHandler(52, (data) => {
+      const payload = data.slice(data.indexOf(";") + 1);
+      if (!payload || payload === "?" || payload.length > 4 << 20) return true;
+      try {
+        const bytes = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
+        const text = new TextDecoder().decode(bytes);
+        if (text) writeText(text).then(() => uiRef.current.toast(trNow("session.osc52Copied")), () => {});
+      } catch {
+        /* not base64: ignore */
+      }
+      return true;
+    });
+
+    // A program that grabbed the mouse (tmux with mouse on, mc, htop…) gets drags instead of
+    // xterm; Shift+drag still selects. Tell about it once per run.
+    termEl.current!.addEventListener("mousedown", (e) => {
+      if (e.button !== 0 || e.shiftKey || shiftHintShown || t.modes.mouseTrackingMode === "none") return;
+      shiftHintShown = true;
+      uiRef.current.toast(trNow("session.shiftSelectHint"));
+    });
     termEl.current!.addEventListener("contextmenu", onContext);
 
     const ro = new ResizeObserver(() => {
@@ -528,6 +562,25 @@ export function SessionView({ paneId, server, visible, focused, split: inSplit, 
         paneEvents.emit({ type: "ready", paneId });
       }
     }, 100);
+  };
+
+  // ---- paste: text is typed; copied files or a screenshot are uploaded and their paths typed ----
+  const pasteRef = useRef(() => {});
+  pasteRef.current = async () => {
+    const t = term.current;
+    if (!t) return;
+    const clip = await readPaste();
+    if (!clip) return;
+    if ("text" in clip) return t.paste(clip.text);
+    const sid = sessionRef.current;
+    if (!sid) return ui.toast(trNow("session.notConnected"), "error");
+    try {
+      const dest = remoteDir.current ?? (await api.remoteHome(sid));
+      const ok = await transfers.start({ direction: "up", sessionId: sid, server: server.name, sources: clip.files, dest });
+      if (ok) t.paste(clip.files.map((f) => shellQuote(joinPath(dest, baseName(f), true))).join(" ") + " ");
+    } catch (e) {
+      ui.toast(errorText(e), "error");
+    }
   };
 
   // ---- drop onto terminal = upload to the current remote folder ----
